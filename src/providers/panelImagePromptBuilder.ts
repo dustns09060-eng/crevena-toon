@@ -102,6 +102,24 @@ const CHARACTER_IDENTITY_PRIORITY_CLAUSE = [
 ].join("\n");
 
 /**
+ * Character count fidelity — 실제 테스트에서 panel.character_ids에 3명이
+ * 있었는데(엄마+아이 2명) 생성된 이미지에는 아이 1명이 누락된 문제가
+ * 발견됐다. 각 캐릭터 블록만으로는 "몇 명이 반드시 다 나와야 하는지"를
+ * 모델이 명시적으로 알지 못하므로, 등장인원 수와 목록을 별도로 한 번 더
+ * 선언하고 전원 등장을 명시적으로 요구한다.
+ */
+function buildExpectedCharacterCountClause(characters: PanelCharacterContext[]): string {
+  const lines = [
+    `EXPECTED CHARACTER COUNT: ${characters.length}`,
+    ...characters.map((c, i) => `- CHARACTER ${String.fromCharCode(65 + i)}: ${c.display_name}`),
+    "Every character listed above must appear visibly in the generated image unless SCENE explicitly says that " +
+      "character is off-screen.",
+    "Do not merge two different characters into one figure, and do not omit any character listed above.",
+  ];
+  return lines.join("\n");
+}
+
+/**
  * 참조 이미지(각 캐릭터의 승인된 Character Sheet)가 실제 API 요청에서
  * "CHARACTER A/B/C" 순서와 동일한 순서로 첨부된다는 것을 모델에게
  * 명시적으로 알려준다. 이전까지는 텍스트 라벨과 이미지 배열 순서가
@@ -204,39 +222,31 @@ function buildNightTimeClause(): string {
 }
 
 /**
- * 실제 이미지 테스트에서 노트북 화면에 "DEADLINE" 글자, Apple 로고가
- * 그려지는 문제가 발견되어 추가한 절. imageNegativeConstraints의 짧은
- * 금지 목록만으로는 "그럼 화면/전자기기를 어떻게 그려야 하는지"에 대한
- * 긍정적 지시가 없어 모델이 스스로 그럴듯한 텍스트/로고로 채워 넣는
- * 경향이 있었다 — 이 절은 "빈 화면/추상 UI + 브랜드 없는 전자기기"라는
- * 대안을 명시적으로 제시한다. 단, 시계처럼 시간이 장면에 중요한 경우는
- * 바늘 표현을 예외로 허용한다(글자/숫자가 아니라 바늘 위치이므로
- * "no readable text/numbers" 제약과 충돌하지 않는다).
+ * 실제 이미지 테스트에서 Apple 로고가 노트북에 그대로 그려지는 문제가
+ * "no Apple logo" 같은 negative constraint만으로는 막히지 않는다는 게
+ * 확인됐다 — 무엇을 금지하는지만 말하고 "그럼 실제로 어떻게 그려야
+ * 하는지"에 대한 긍정적(positive) 지시가 없으면 모델이 스스로 그럴듯한
+ * 브랜드 디자인을 채워 넣는 경향이 있었다. 이 절은 negative 목록에
+ * 의존하지 않고, 화면/외형을 구체적으로 지정하는 positive spec으로
+ * 대체·보강한다. 시계 바늘은 여전히 예외로 허용한다(글자/숫자가 아니라
+ * 바늘 위치이므로 "no readable text/numbers" 제약과 충돌하지 않는다).
  */
 function buildElectronicsAndClockClause(): string {
   return [
-    "ELECTRONICS & CLOCKS:",
-    "Any laptop, phone, tablet, TV, or other screen must be generic and unbranded — no manufacturer logos, " +
-      "no on-screen readable text, icons, or UI text unless the scene explicitly requires specific screen " +
-      "content to make sense. When in doubt, render the screen as blank, off, or an abstract glow/soft light " +
-      "instead of inventing text or a logo.",
+    "GENERIC ELECTRONICS (positive specification — do not rely on negative prompting alone):",
+    "Use a plain fictional generic laptop/phone/tablet/TV design, not visually identifiable as any real-world " +
+      "brand.",
+    "The laptop lid (or phone/tablet back) is a smooth, uninterrupted solid-color surface. The center of the " +
+      "lid/back is completely blank.",
+    "There is no emblem, symbol, icon, glowing mark, fruit shape, lettering, manufacturer mark, or decorative " +
+      "badge anywhere on the device.",
+    "Screens must be rendered as blank, off, or an abstract glow/soft light instead of inventing on-screen " +
+      "text, icons, or UI — unless the scene explicitly requires specific screen content to make sense.",
     "Exception: if the scene depends on a character checking the time, an analog wall clock or watch with " +
       "clock hands showing approximately the correct time is allowed and encouraged — clock hands are not " +
       "considered readable text.",
   ].join("\n");
 }
-
-/**
- * SCENE completed-state 규칙 — 실제 테스트에서 "소파로 뛰어들어 털썩
- * 누웠다"처럼 여러 동작이 이어지는 장면 묘사가, 최종 상태(누움)가 아닌
- * 중간 동작(공중에서 점프)으로 그려지는 문제가 발견됐다. SCENE이
- * 여러 동작을 서술할 때는 마지막 완결 상태를 그리라고 명시한다.
- */
-const SCENE_COMPLETED_STATE_CLAUSE =
-  "If SCENE describes a sequence of actions ending in a completed state (e.g. \"jumps onto the sofa and " +
-  "flops down\" → lying down; \"sits down and opens the laptop\" → seated with laptop open), depict that " +
-  "final completed state, not an intermediate moment (e.g. mid-air, mid-motion) — unless SCENE or COMPOSITION " +
-  "explicitly asks for the intermediate moment itself.";
 
 export function buildPanelImagePrompt(input: BuildPanelImagePromptInput): string {
   const lines: string[] = [
@@ -255,6 +265,10 @@ export function buildPanelImagePrompt(input: BuildPanelImagePromptInput): string
   input.characters.forEach((ctx, i) => {
     lines.push("", buildCharacterBlock(i, ctx));
   });
+
+  if (input.characters.length > 0) {
+    lines.push("", buildExpectedCharacterCountClause(input.characters));
+  }
 
   if (input.characters.length > 1) {
     lines.push(
@@ -275,19 +289,28 @@ export function buildPanelImagePrompt(input: BuildPanelImagePromptInput): string
   }
 
   // 4. SCENE ACTION — 실제로 무슨 일이 일어나는지의 authoritative source.
-  // 5. COMPOSITION / CAMERA — 구도/카메라를 보조하는 secondary source.
-  //    COMPOSITION이 SCENE의 장소/행동/소품/시간대와 충돌하면 SCENE이
-  //    우선한다는 것을 명시해, Storyboard AI가 만든 두 자유 텍스트
-  //    필드(scene 한글 / image_prompt 영문)가 서로 다른 내용을 말할 때
-  //    이미지가 둘을 억지로 절충(예: 허공에 뜬 노트북)하지 않게 한다.
+  // 5. CAMERA/COMPOSITION — 구도/카메라만 담당하는 secondary source.
+  //    실제 테스트에서 COMPOSITION의 "leaping and flopping... arms
+  //    outstretched" 같은 문구가 SCENE의 최종 상태(소파에 누움)보다
+  //    강하게 작용해 공중 점프 동작으로 그려지는 문제가 발견됐다 —
+  //    두 역할을 더 명확히 분리하고, 충돌 시 SCENE의 어떤 요소가
+  //    우선하는지 구체적 예시로 명시한다.
   lines.push(
     "",
-    `SCENE (AUTHORITATIVE — what actually happens): ${input.sceneDescription}`,
-    `COMPOSITION (secondary — camera/framing/pose only): ${input.imagePrompt}`,
-    "SCENE FACTS ARE AUTHORITATIVE. Composition instructions must never contradict the scene's location, " +
-      "character actions, major objects, or time of day — if COMPOSITION conflicts with SCENE on any of these, " +
-      "follow SCENE and adjust the composition to match it, not the other way around.",
-    SCENE_COMPLETED_STATE_CLAUSE,
+    `SCENE ACTION (AUTHORITATIVE — defines what happens, the final visible state, how many characters are ` +
+      `present, the location, and the time of day): ${input.sceneDescription}`,
+    `CAMERA/COMPOSITION (may ONLY add camera angle, framing, character placement, and visual emphasis — must ` +
+      `NOT change the action, completed state, character count, location, or time of day from SCENE ACTION ` +
+      `above): ${input.imagePrompt}`,
+    "If CAMERA/COMPOSITION conflicts with SCENE ACTION on any of those five things, ignore the conflicting " +
+      "part of CAMERA/COMPOSITION and follow SCENE ACTION instead. For example, if SCENE ACTION describes a " +
+      "character already lying down/sprawled/seated, ignore CAMERA/COMPOSITION phrasing like \"jumping toward\", " +
+      "\"mid-air above\", or \"running toward\" that same spot — depict the character already in the final " +
+      "position SCENE ACTION describes, only changing the camera angle/framing.",
+    "If SCENE ACTION itself describes a sequence of actions ending in a completed state (e.g. \"jumps onto the " +
+      "sofa and flops down\" → lying down; \"sits down and opens the laptop\" → seated with laptop open), " +
+      "depict that final completed state by default, not an intermediate moment (e.g. mid-air, mid-motion) — " +
+      "unless SCENE ACTION itself explicitly asks for the intermediate moment as the point of the shot.",
     // 6. EXPRESSION / SECONDARY DETAILS.
     `EXPRESSION/ACTION (secondary detail): ${input.expression}`,
     "",

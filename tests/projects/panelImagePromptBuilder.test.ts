@@ -167,10 +167,9 @@ describe("buildPanelImagePrompt", () => {
       style: "warm webtoon style",
       aspectRatio: "1:1",
     });
-    expect(prompt).toMatch(/SCENE \(AUTHORITATIVE/);
-    expect(prompt).toMatch(/COMPOSITION \(secondary/);
-    expect(prompt).toMatch(/SCENE FACTS ARE AUTHORITATIVE/);
-    expect(prompt).toMatch(/follow SCENE and adjust the composition to match it/);
+    expect(prompt).toMatch(/SCENE ACTION \(AUTHORITATIVE/);
+    expect(prompt).toMatch(/CAMERA\/COMPOSITION \(may ONLY add/);
+    expect(prompt).toMatch(/ignore the conflicting part of CAMERA\/COMPOSITION and follow SCENE ACTION instead/);
   });
 
   test("여러 캐릭터가 등장하면 reference 이미지 순서와 CHARACTER 라벨을 명시적으로 매핑한다", () => {
@@ -388,12 +387,12 @@ describe("buildPanelImagePrompt — 실제 이미지 테스트에서 발견된 �
 
   test("SCENE completed-state 규칙이 항상 포함된다", () => {
     const prompt = buildPanelImagePrompt(basicInput());
-    expect(prompt).toMatch(/depict that final completed state, not an intermediate moment/);
+    expect(prompt).toMatch(/depict that final completed state by default, not an intermediate moment/);
   });
 
   test("전자기기는 브랜드 없이/빈 화면으로 그리라는 지시와 시계 바늘 예외가 포함된다", () => {
     const prompt = buildPanelImagePrompt(basicInput());
-    expect(prompt).toMatch(/generic and unbranded/);
+    expect(prompt).toMatch(/not visually identifiable as any real-world brand/);
     expect(prompt).toMatch(/blank, off, or an abstract glow/);
     expect(prompt).toMatch(/clock hands.*are not considered readable text/s);
   });
@@ -407,5 +406,83 @@ describe("buildPanelImagePrompt — 실제 이미지 테스트에서 발견된 �
     expect(prompt).toMatch(/no sound-effect lettering/);
     expect(prompt).toMatch(/no comic symbols containing letters/);
     expect(prompt).toMatch(/no readable numbers unless explicitly required by the scene/);
+  });
+});
+
+describe("buildPanelImagePrompt — SCENE vs COMPOSITION 충돌 방지 강화(Panel 8/13 재검증 라운드)", () => {
+  function basicInput(overrides: Partial<Parameters<typeof buildPanelImagePrompt>[0]> = {}) {
+    return {
+      sceneDescription: "소파로 뛰어들어 털썩 누웠다",
+      expression: "지침",
+      imagePrompt: "medium shot",
+      characters: [{ display_name: "엄마", characterBible: momBible }],
+      style: "warm webtoon style",
+      aspectRatio: "1:1",
+      ...overrides,
+    };
+  }
+
+  test("SCENE의 completed state가 충돌하는 image_prompt 문구보다 우선한다는 명시적 지시가 있다", () => {
+    const prompt = buildPanelImagePrompt(
+      basicInput({ imagePrompt: "mom leaping and flopping onto the sofa, arms outstretched, mid-air" })
+    );
+    expect(prompt).toMatch(
+      /ignore the conflicting part of CAMERA\/COMPOSITION and follow SCENE ACTION instead/
+    );
+    // 실제로 문제가 됐던 문구들이 "따르지 말아야 할 예시"로 명시돼 있다.
+    expect(prompt).toMatch(/"jumping toward"/);
+    expect(prompt).toMatch(/"mid-air above"/);
+    expect(prompt).toMatch(/"running toward"/);
+  });
+
+  test("COMPOSITION은 action/completed state/인원수/장소/시간대를 바꿀 수 없다는 규칙이 명시된다", () => {
+    const prompt = buildPanelImagePrompt(basicInput());
+    expect(prompt).toMatch(
+      /must\s*\n?\s*NOT change the action, completed state, character count, location, or time of day/
+    );
+    expect(prompt).toMatch(/may ONLY add camera angle, framing, character placement, and visual emphasis/);
+  });
+
+  test("등장인물이 있으면 EXPECTED CHARACTER COUNT와 전원 등장 요구가 포함된다", () => {
+    const prompt = buildPanelImagePrompt(
+      basicInput({
+        characters: [
+          { display_name: "엄마", characterBible: momBible },
+          { display_name: "별이", characterBible: firstBible },
+        ],
+      })
+    );
+    expect(prompt).toMatch(/EXPECTED CHARACTER COUNT: 2/);
+    expect(prompt).toMatch(/- CHARACTER A: 엄마/);
+    expect(prompt).toMatch(/- CHARACTER B: 별이/);
+    expect(prompt).toMatch(
+      /Every character listed above must appear visibly in the generated image unless SCENE explicitly says/
+    );
+    expect(prompt).toMatch(/Do not merge two different characters into one figure/);
+    expect(prompt).toMatch(/do not omit any character listed above/);
+  });
+
+  test("캐릭터가 없으면 EXPECTED CHARACTER COUNT 절 자체가 없다", () => {
+    const prompt = buildPanelImagePrompt(basicInput({ characters: [] }));
+    expect(prompt).not.toMatch(/EXPECTED CHARACTER COUNT/);
+  });
+
+  test("GENERIC ELECTRONICS positive specification — 브랜드 로고/기호/엠블럼 없는 매끈한 표면을 명시적으로 지정한다", () => {
+    const prompt = buildPanelImagePrompt(basicInput());
+    expect(prompt).toMatch(/GENERIC ELECTRONICS \(positive specification/);
+    expect(prompt).toMatch(/smooth, uninterrupted solid-color surface/);
+    expect(prompt).toMatch(/center of the lid\/back is completely blank/);
+    expect(prompt).toMatch(
+      /no emblem, symbol, icon, glowing mark, fruit shape, lettering, manufacturer mark, or decorative\s*\n?\s*badge/
+    );
+  });
+
+  test("기존 negative constraints(텍스트/말풍선/워터마크 등)는 회귀 없이 그대로 유지된다", () => {
+    const prompt = buildPanelImagePrompt(basicInput());
+    expect(prompt).toMatch(/no readable text/);
+    expect(prompt).toMatch(/no speech bubbles/);
+    expect(prompt).toMatch(/no empty speech bubbles/);
+    expect(prompt).toMatch(/no watermark/);
+    expect(prompt).toMatch(/no fake artist signature/);
   });
 });

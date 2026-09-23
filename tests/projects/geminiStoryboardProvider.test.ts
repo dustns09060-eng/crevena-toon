@@ -228,4 +228,21 @@ describe("geminiStoryboardProvider 프롬프트 규칙", () => {
   test("프롬프트에 캐릭터 identifier 목록을 전달한다(buildIdentifiedCharacterContextText 사용)", () => {
     expect(source).toMatch(/buildIdentifiedCharacterContextText\(input\.characters\)/);
   });
+
+  test("image_prompt는 scene_description의 행동/최종 상태/인원수/장소/시간대를 바꿀 수 없고 카메라 앵글·프레이밍만 담당한다는 규칙이 있다", () => {
+    expect(source).toMatch(
+      /scene_description은 "무슨 일이 일어나는지 \/ 그 결과 최종적으로 어떤\s*\n\s*상태인지 \/ 몇 명이 등장하는지 \/ 어디서 \/ 언제"를 정하는 authoritative/
+    );
+    expect(source).toMatch(/image_prompt는 오직 카메라 앵글, 프레이밍, 인물 배치,\s*\n\s*시각적 강조만 추가할 수 있고/);
+  });
+
+  test("SCENE과 충돌하는 금지 문구 예시(점프/공중/달려가는 모습)가 명시돼 있다", () => {
+    expect(source).toMatch(/엄마가 소파를 향해 점프하는 모습/);
+    expect(source).toMatch(/공중에 떠 있는 엄마/);
+    expect(source).toMatch(/소파를 향해 달려가는 엄마/);
+  });
+
+  test("여러 동작이 이어지는 scene_description은 마지막 완결 상태만 image_prompt로 표현하라는 규칙이 있다", () => {
+    expect(source).toMatch(/마지막\s*\n?\s*완결된 상태\(눕다\)만 시각화하고/);
+  });
 });

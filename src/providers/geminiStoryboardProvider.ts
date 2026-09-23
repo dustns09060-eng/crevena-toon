@@ -233,6 +233,18 @@ const STORYBOARD_SYSTEM_INSTRUCTION = `당신은 인스타그램 육아 일상�
   image_prompt가 scene_description과 다른 장소/행동/소품/시간대를
   묘사해서 서로 모순되면 안 됩니다 — 카메라 구도나 표현 방식만 다르게
   가져가고, 내용 자체는 항상 scene_description을 따르세요.
+- scene_description은 "무슨 일이 일어나는지 / 그 결과 최종적으로 어떤
+  상태인지 / 몇 명이 등장하는지 / 어디서 / 언제"를 정하는 authoritative
+  source입니다. image_prompt는 오직 카메라 앵글, 프레이밍, 인물 배치,
+  시각적 강조만 추가할 수 있고, 이 다섯 가지(행동/최종 상태/인원수/
+  장소/시간대)를 절대 바꾸면 안 됩니다.
+  예: scene_description이 "엄마가 소파에 털썩 누웠다"라면 —
+    허용: "지쳐서 소파에 널브러진 엄마를 와이드샷으로 담는다"
+    금지: "엄마가 소파를 향해 점프하는 모습", "공중에 떠 있는 엄마",
+          "소파를 향해 달려가는 엄마" (모두 최종 상태가 아닌 중간 동작)
+  scene_description이 "뛰어들어 털썩 누웠다"처럼 여러 동작이 이어지는
+  문장이면, image_prompt는 그 중 마지막 완결된 상태(눕다)만 시각화하고
+  중간 동작(뛰어드는 순간, 공중에 뜬 순간)은 image_prompt에 넣지 마세요.
 - time_of_day는 모든 컷(표지 포함)에 반드시 MORNING/DAY/EVENING/NIGHT/
   LATE_NIGHT 중 하나로 채우세요. scene_description의 맥락(예: "아이들이
   잠든 뒤", "육퇴", "늦은 밤")으로 알 수 있는 시간대를 정확히 판단하세요.
