@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildPanelImagePrompt } from "../../src/providers/panelImagePromptBuilder";
+import { buildPanelImagePrompt, COVER_COMPOSITION_NOTE } from "../../src/providers/panelImagePromptBuilder";
 
 const momBible = {
   hairstyle: "짧은 단발머리",
@@ -107,6 +107,61 @@ describe("buildPanelImagePrompt", () => {
     });
     expect(prompt).toMatch(/speech bubble may later be overlaid/);
     expect(prompt).toMatch(/do not draw any speech bubble/);
+  });
+
+  test("여러 캐릭터가 등장하면 reference 이미지 순서와 CHARACTER 라벨을 명시적으로 매핑한다", () => {
+    const prompt = buildPanelImagePrompt({
+      sceneDescription: "거실",
+      expression: "놀람",
+      imagePrompt: "wide shot",
+      characters: [
+        { display_name: "엄마", characterBible: momBible },
+        { display_name: "첫째", characterBible: firstBible },
+      ],
+      style: "warm webtoon style",
+      aspectRatio: "1:1",
+    });
+    expect(prompt).toMatch(/REFERENCE IMAGE MAPPING/);
+    expect(prompt).toMatch(/Reference image 1 = CHARACTER A/);
+    expect(prompt).toMatch(/Reference image 2 = CHARACTER B/);
+  });
+
+  test("단일 캐릭터면 reference mapping 지시가 없다", () => {
+    const prompt = buildPanelImagePrompt({
+      sceneDescription: "거실",
+      expression: "웃음",
+      imagePrompt: "medium shot",
+      characters: [{ display_name: "엄마", characterBible: momBible }],
+      style: "warm webtoon style",
+      aspectRatio: "1:1",
+    });
+    expect(prompt).not.toMatch(/REFERENCE IMAGE MAPPING/);
+  });
+
+  test("coverNote를 전달하면 표지 전용 안내가 프롬프트에 포함된다", () => {
+    const prompt = buildPanelImagePrompt({
+      sceneDescription: "표지 장면",
+      expression: "",
+      imagePrompt: "cover composition",
+      characters: [{ display_name: "엄마", characterBible: momBible }],
+      style: "warm webtoon style",
+      aspectRatio: "1:1",
+      coverNote: COVER_COMPOSITION_NOTE,
+    });
+    expect(prompt).toMatch(/COVER image for the whole episode/);
+    expect(prompt).toMatch(/do not draw any title text/);
+  });
+
+  test("coverNote가 없으면(본문 컷) 표지 전용 안내가 없다", () => {
+    const prompt = buildPanelImagePrompt({
+      sceneDescription: "거실",
+      expression: "웃음",
+      imagePrompt: "medium shot",
+      characters: [{ display_name: "엄마", characterBible: momBible }],
+      style: "warm webtoon style",
+      aspectRatio: "1:1",
+    });
+    expect(prompt).not.toMatch(/COVER image for the whole episode/);
   });
 
   test("설정한 aspect ratio가 그대로 반영된다", () => {

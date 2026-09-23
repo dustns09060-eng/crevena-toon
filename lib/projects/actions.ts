@@ -27,11 +27,13 @@ export async function createProjectAction(
 ): Promise<CreateProjectState> {
   const { supabase } = await requireUser();
 
+  const seriesIdRaw = String(formData.get("series_id") ?? "");
   const raw = {
     title: String(formData.get("title") ?? ""),
     topic: String(formData.get("topic") ?? ""),
     panel_count: Number(formData.get("panel_count") ?? 8),
     character_ids: formData.getAll("character_ids").map(String),
+    series_id: seriesIdRaw.length > 0 ? seriesIdRaw : null,
   };
 
   const validation = validateProjectForm(raw);

@@ -22,6 +22,9 @@ export default async function CharactersPage() {
       <div className="topbar">
         <h1>내 캐릭터</h1>
         <div style={{ display: "flex", gap: 8 }}>
+          <Link href="/toon/series" className="btn">
+            시리즈
+          </Link>
           <Link href="/toon/projects" className="btn">
             프로젝트
           </Link>

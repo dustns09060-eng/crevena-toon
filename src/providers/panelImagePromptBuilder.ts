@@ -31,6 +31,12 @@ export interface BuildPanelImagePromptInput {
   style: string;
   /** 예: "1:1" — 향후 4:5 등 다른 비율을 추가할 수 있도록 설정값으로 분리 */
   aspectRatio: string;
+  /**
+   * 표지 전용 추가 지시. 값이 있으면 "이 장면은 에피소드 표지다"라는
+   * 맥락과 제목 여백/텍스트 금지 지시를 덧붙인다. 본문 컷은 이 값을
+   * 넘기지 않는다(undefined) — 기존 호출부는 전혀 변경할 필요가 없다.
+   */
+  coverNote?: string;
 }
 
 function buildCharacterBlock(index: number, ctx: PanelCharacterContext): string {
@@ -51,11 +57,36 @@ function buildCharacterBlock(index: number, ctx: PanelCharacterContext): string 
   return lines.join("\n");
 }
 
+/**
+ * 참조 이미지(각 캐릭터의 승인된 Character Sheet)가 실제 API 요청에서
+ * "CHARACTER A/B/C" 순서와 동일한 순서로 첨부된다는 것을 모델에게
+ * 명시적으로 알려준다. 이전까지는 텍스트 라벨과 이미지 배열 순서가
+ * 암묵적으로만 일치해 identity가 섞일 위험이 있었다(조사 결과) — 이
+ * 문장이 그 바인딩을 명확히 한다. 호출부(panelImages.ts)는
+ * referenceImages 배열을 항상 이 순서(캐릭터 블록 순서)와 동일하게
+ * 만들어야 한다.
+ */
+function buildReferenceImageMappingClause(count: number): string {
+  const lines = ["REFERENCE IMAGE MAPPING:"];
+  for (let i = 0; i < count; i++) {
+    lines.push(`Reference image ${i + 1} = CHARACTER ${String.fromCharCode(65 + i)}`);
+  }
+  lines.push(
+    "Each character must keep only their own reference identity (face, hairstyle, hair color, body type) " +
+      "and must not borrow or blend facial/hair/body features from any other character's reference image."
+  );
+  return lines.join("\n");
+}
+
 export function buildPanelImagePrompt(input: BuildPanelImagePromptInput): string {
   const lines: string[] = [
     `Generate a single Instagram daily-life comic panel illustration, aspect ratio ${input.aspectRatio}.`,
     input.style,
   ];
+
+  if (input.coverNote) {
+    lines.push("", input.coverNote);
+  }
 
   input.characters.forEach((ctx, i) => {
     lines.push("", buildCharacterBlock(i, ctx));
@@ -65,7 +96,9 @@ export function buildPanelImagePrompt(input: BuildPanelImagePromptInput): string
     lines.push(
       "",
       "Do not mix up the characters above — each character's face, hairstyle, hair color, age, and outfit " +
-        "must stay exactly as described for that character and must not blend with any other character in this scene."
+        "must stay exactly as described for that character and must not blend with any other character in this scene.",
+      "",
+      buildReferenceImageMappingClause(input.characters.length)
     );
   }
 
@@ -84,3 +117,10 @@ export function buildPanelImagePrompt(input: BuildPanelImagePromptInput): string
 
   return lines.join("\n");
 }
+
+/** 표지 전용 안내문 — buildPanelImagePrompt의 coverNote로 전달한다. */
+export const COVER_COMPOSITION_NOTE =
+  "This is the COVER image for the whole episode (Instagram feed thumbnail). It must represent the entire " +
+  "episode at a glance, clearly show the main character(s), and use an eye-catching composition. Leave clean " +
+  "empty space near the top (or another natural area) for a title that will be added later as a separate text " +
+  "overlay — but do not draw any title text, letters, or logo yourself; the image itself must contain no text.";

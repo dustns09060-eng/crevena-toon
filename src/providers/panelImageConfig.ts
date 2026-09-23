@@ -4,5 +4,6 @@
  */
 export const DEFAULT_PANEL_ASPECT_RATIO = process.env.PANEL_IMAGE_ASPECT_RATIO ?? "1:1";
 
-/** 한 컷 생성에 사용할 참조 이미지(캐릭터 시트) 최대 개수. */
-export const MAX_CHARACTER_SHEETS_PER_PANEL = 4;
+// 한 컷/표지에 동시에 등장할 수 있는 캐릭터(Character Sheet reference) 최대
+// 인원은 projectPanelCountConfig.ts의 MAX_CHARACTERS_PER_PANEL로 옮겼다
+// (이전엔 여기 정의만 되고 실제로 어디서도 강제되지 않는 죽은 상수였다).

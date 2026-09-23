@@ -167,12 +167,14 @@ export default function FinalClient({
       <div className="final-grid">
         {panels.map((panel, index) => (
           <div className="card" key={panel.panelNumber}>
-            <h3 style={{ fontSize: 14, marginTop: 0 }}>{panel.panelNumber}컷</h3>
+            <h3 style={{ fontSize: 14, marginTop: 0 }}>
+              {panel.panelType === "cover" ? "표지" : `${panel.panelNumber - (panels[0]?.panelType === "cover" ? 1 : 0)}컷`}
+            </h3>
             {panel.finalSignedUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={panel.finalSignedUrl}
-                alt={`${panel.panelNumber}컷 최종 이미지`}
+                alt={panel.panelType === "cover" ? "표지 최종 이미지" : `${panel.panelNumber}컷 최종 이미지`}
                 style={{ width: "100%", borderRadius: 12, border: "1px solid var(--color-border)" }}
               />
             ) : (

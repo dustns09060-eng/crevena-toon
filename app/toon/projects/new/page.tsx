@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "../../../../lib/supabase/server";
 import { getCharacters } from "../../../../lib/characters/service";
+import { getSeriesCharacters, getSeriesList } from "../../../../lib/series/service";
 import NewProjectForm from "./NewProjectForm";
 
 export default async function NewProjectPage() {
@@ -12,6 +13,12 @@ export default async function NewProjectPage() {
   if (!user) redirect("/toon/login");
 
   const characters = await getCharacters(supabase);
+  const seriesList = await getSeriesList(supabase);
+  const seriesCharacterIds: Record<string, string[]> = {};
+  for (const s of seriesList) {
+    const seriesCharacters = await getSeriesCharacters(supabase, s.id);
+    seriesCharacterIds[s.id] = seriesCharacters.map((c) => c.id);
+  }
 
   return (
     <main className="page">
@@ -30,6 +37,8 @@ export default async function NewProjectPage() {
         <div className="card">
           <NewProjectForm
             characters={characters.map((c) => ({ id: c.id, display_name: c.display_name, role: c.role ?? "" }))}
+            series={seriesList.map((s) => ({ id: s.id, title: s.title }))}
+            seriesCharacterIds={seriesCharacterIds}
           />
         </div>
       )}

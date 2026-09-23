@@ -16,7 +16,12 @@ export async function createProject(
 ): Promise<ToonProject> {
   const { data, error } = await supabase
     .from("toon_projects")
-    .insert({ title: input.title, topic: input.topic, panel_count: input.panel_count })
+    .insert({
+      title: input.title,
+      topic: input.topic,
+      panel_count: input.panel_count,
+      series_id: input.series_id ?? null,
+    })
     .select()
     .single();
   if (error) throw error;
@@ -101,7 +106,7 @@ const PANELS_BUCKET = "toon-panels";
  * 이 함수는 절대 건드리지 않는다 — 프로젝트 삭제는 toon_characters에도
  * FK 영향이 없다(STEP 1 설계: toon_project_characters만 cascade).
  */
-async function cleanupProjectStorage(
+export async function cleanupProjectStorage(
   supabase: SupabaseClient,
   userId: string,
   projectId: string,

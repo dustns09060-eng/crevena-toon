@@ -5,23 +5,32 @@ import { useState, useTransition } from "react";
 import {
   confirmStoryboardAction,
   generateStoryboardAction,
+  regenerateStoryboardWithSettingsAction,
   saveStoryboardAction,
 } from "../../../../lib/projects/storyboard";
 import type { StoryboardDraftPanel } from "../../../../src/providers/storyboardMapper";
 import type { ProjectCharacterContext } from "../../../../lib/projects/service";
 import type { PanelImageView } from "../../../../lib/projects/panelImages";
 import type { ToonPanel, ToonProject } from "../../../../src/db/types";
+import {
+  MAX_CHARACTERS_PER_PANEL,
+  PROJECT_TOTAL_PANEL_COUNT_MAX,
+  PROJECT_TOTAL_PANEL_COUNT_MIN,
+} from "../../../../src/providers/projectPanelCountConfig";
 import PanelImageGenerator from "./PanelImageGenerator";
 
 function panelsToDraftPanels(panels: ToonPanel[]): StoryboardDraftPanel[] {
   return panels.map((p) => ({
     panel_number: p.panel_number,
+    panel_type: p.panel_type,
     scene_description: p.scene ?? "",
     character_ids: p.character_ids,
     expression: p.expression ?? "",
     dialogue: p.dialogue.map((d) => ({ id: d.id, character_id: d.character_id, text: d.text })),
     narration: p.narration,
     image_prompt: p.image_prompt ?? "",
+    cover_title: p.cover_title,
+    cover_subtitle: p.cover_subtitle,
   }));
 }
 
@@ -29,14 +38,31 @@ function renumber(panels: StoryboardDraftPanel[]): StoryboardDraftPanel[] {
   return panels.map((p, i) => ({ ...p, panel_number: i + 1 }));
 }
 
+function makeEmptyScenePanel(panelNumber: number): StoryboardDraftPanel {
+  return {
+    panel_number: panelNumber,
+    panel_type: "scene",
+    scene_description: "",
+    character_ids: [],
+    expression: "",
+    dialogue: [],
+    narration: null,
+    image_prompt: "",
+    cover_title: null,
+    cover_subtitle: null,
+  };
+}
+
 export default function StoryboardEditor({
   project,
   characters,
+  allCharacters,
   initialPanels,
   panelImagesData,
 }: {
   project: ToonProject;
   characters: ProjectCharacterContext[];
+  allCharacters: { id: string; display_name: string; role: string }[];
   initialPanels: ToonPanel[];
   panelImagesData: {
     readinessErrors: string[];
@@ -55,10 +81,29 @@ export default function StoryboardEditor({
   const [saving, startSaving] = useTransition();
   const [confirming, startConfirming] = useTransition();
 
-  const busy = generating || saving || confirming;
-  const charById = new Map(characters.map((c) => [c.id, c]));
+  // 설정 수정(소재/컷수/등장인물) — 생성 이후에도 프로젝트를 새로
+  // 만들지 않고 바꿀 수 있게 한다.
+  const [currentTopic, setCurrentTopic] = useState(project.topic ?? "");
+  const [currentPanelCount, setCurrentPanelCount] = useState(project.panel_count);
+  const [currentCharacterIds, setCurrentCharacterIds] = useState(characters.map((c) => c.id));
+  const [showSettingsForm, setShowSettingsForm] = useState(false);
+  const [settingsTopic, setSettingsTopic] = useState(currentTopic);
+  const [settingsPanelCount, setSettingsPanelCount] = useState(currentPanelCount);
+  const [settingsCharacterIds, setSettingsCharacterIds] = useState<string[]>(currentCharacterIds);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsPending, startSettingsTransition] = useTransition();
 
-  function handleGenerate() {
+  const busy = generating || saving || confirming || settingsPending;
+  const charById = new Map(characters.map((c) => [c.id, c]));
+  const hasAnyGeneratedImage = initialPanels.some((p) => p.raw_image_url || p.image_url);
+
+  function handleGenerate(skipConfirm = false) {
+    if (!skipConfirm && hasAnyGeneratedImage) {
+      const ok = window.confirm(
+        "스토리보드를 다시 만들까요?\n현재 작성된 표지와 장면 내용이 새로운 설정으로 변경됩니다.\n이미 생성한 캐릭터와 Character Sheet는 변경되지 않습니다."
+      );
+      if (!ok) return;
+    }
     setErrorMessage(null);
     setInfoMessage(null);
     startGenerating(async () => {
@@ -72,6 +117,56 @@ export default function StoryboardEditor({
       } else {
         setErrorMessage(result.message ?? "스토리보드 생성에 실패했습니다.");
       }
+    });
+  }
+
+  function openSettingsForm() {
+    setSettingsTopic(currentTopic);
+    setSettingsPanelCount(currentPanelCount);
+    setSettingsCharacterIds(currentCharacterIds);
+    setSettingsError(null);
+    setShowSettingsForm(true);
+  }
+
+  function toggleSettingsCharacter(id: string) {
+    setSettingsCharacterIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function submitSettings(confirmDiscardImages = false) {
+    setSettingsError(null);
+    startSettingsTransition(async () => {
+      // regenerateStoryboardWithSettingsAction은 2-phase로 동작한다:
+      // 새 설정으로 AI를 먼저 호출해 검증까지 통과한 뒤에만 실제로
+      // topic/panel_count/등장인물/panels를 함께 반영한다. 즉 AI가
+      // 실패하면 여기 도달하기 전에 이미 실패로 끝나고, 기존 설정과
+      // 스토리보드/이미지는 전혀 바뀌지 않은 채로 남는다.
+      const result = await regenerateStoryboardWithSettingsAction(
+        project.id,
+        { topic: settingsTopic, panel_count: settingsPanelCount, character_ids: settingsCharacterIds },
+        confirmDiscardImages
+      );
+      if (result.ok && result.draft) {
+        setCurrentTopic(settingsTopic);
+        setCurrentPanelCount(settingsPanelCount);
+        setCurrentCharacterIds(settingsCharacterIds);
+        setPanels(result.draft.panels);
+        setSummary(result.draft.summary);
+        setHasStoryboard(true);
+        setDirty(false);
+        setShowSettingsForm(false);
+        setInfoMessage("새 설정으로 스토리보드를 만들어 저장했습니다. 내용을 확인해주세요.");
+        if (status === "draft") setStatus("storyboard");
+        router.refresh();
+        return;
+      }
+      if (result.needsImageConfirmation) {
+        const ok = window.confirm(
+          `이미 생성된 이미지가 있습니다.\n컷수를 ${settingsPanelCount}장으로 줄이면 컷 ${result.affectedPanelNumbers?.join(", ")}의 이미지가 삭제됩니다.\n계속할까요?`
+        );
+        if (ok) submitSettings(true);
+        return;
+      }
+      setSettingsError(result.message ?? "설정 저장에 실패했습니다.");
     });
   }
 
@@ -109,6 +204,11 @@ export default function StoryboardEditor({
   }
 
   function toggleCharacterInPanel(index: number, characterId: string) {
+    const current = panels[index];
+    if (current && !current.character_ids.includes(characterId) && current.character_ids.length >= MAX_CHARACTERS_PER_PANEL) {
+      setErrorMessage(`한 장면에는 최대 ${MAX_CHARACTERS_PER_PANEL}명의 등장인물을 사용할 수 있어요.`);
+      return;
+    }
     setPanels((prev) =>
       prev.map((p, i) => {
         if (i !== index) return p;
@@ -157,10 +257,37 @@ export default function StoryboardEditor({
     setPanels((prev) => {
       const target = index + direction;
       if (target < 0 || target >= prev.length) return prev;
+      // 표지는 항상 첫 번째 컷이어야 하므로, 표지가 있는 프로젝트에서는
+      // 0번 위치로 들어오거나 나가는 이동을 막는다.
+      if (prev[0]?.panel_type === "cover" && (index === 0 || target === 0)) return prev;
       const next = [...prev];
       [next[index], next[target]] = [next[target], next[index]];
       return renumber(next);
     });
+    setDirty(true);
+  }
+
+  function addScene() {
+    setErrorMessage(null);
+    if (panels.length >= PROJECT_TOTAL_PANEL_COUNT_MAX) {
+      setErrorMessage(`표지 포함 최대 ${PROJECT_TOTAL_PANEL_COUNT_MAX}장까지 만들 수 있어요.`);
+      return;
+    }
+    setPanels((prev) => renumber([...prev, makeEmptyScenePanel(prev.length + 1)]));
+    setDirty(true);
+  }
+
+  function removeScene(index: number) {
+    setErrorMessage(null);
+    if (panels[index]?.panel_type === "cover") {
+      setErrorMessage("표지는 삭제할 수 없어요.");
+      return;
+    }
+    if (panels.length <= PROJECT_TOTAL_PANEL_COUNT_MIN) {
+      setErrorMessage(`최소 ${PROJECT_TOTAL_PANEL_COUNT_MIN}장(표지 포함)은 있어야 해요.`);
+      return;
+    }
+    setPanels((prev) => renumber(prev.filter((_, i) => i !== index)));
     setDirty(true);
   }
 
@@ -175,16 +302,83 @@ export default function StoryboardEditor({
 
       <div className="card">
         <p className="hint">
-          {project.panel_count}컷 · 상태:{" "}
+          총 이미지 {currentPanelCount}장 (표지 포함) · 상태:{" "}
           {{ draft: "소재 입력됨", storyboard: "스토리보드 작성 중", confirmed: "스토리보드 확정", generating: "이미지 생성 중", completed: "완료", failed: "실패" }[status]}
         </p>
-        <p className="hint">소재: {project.topic}</p>
+        <p className="hint">소재: {currentTopic}</p>
+        <p className="hint">
+          등장인물: {allCharacters.filter((c) => currentCharacterIds.includes(c.id)).map((c) => c.display_name).join(" / ") || "없음"}
+        </p>
         {dirty && <p className="error">저장하지 않은 변경사항이 있습니다.</p>}
+
+        {status !== "completed" && !showSettingsForm && (
+          <button type="button" className="btn" onClick={openSettingsForm} disabled={busy}>
+            설정 수정
+          </button>
+        )}
+
+        {showSettingsForm && (
+          <div style={{ marginTop: 12, borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
+            {settingsError && <p className="error">{settingsError}</p>}
+            <div className="field">
+              <label>소재</label>
+              <textarea
+                className="textarea"
+                value={settingsTopic}
+                onChange={(e) => setSettingsTopic(e.target.value)}
+                maxLength={1000}
+              />
+            </div>
+            <div className="field">
+              <label>총 이미지 수 (표지 포함 {settingsPanelCount}장)</label>
+              <input
+                type="range"
+                min={PROJECT_TOTAL_PANEL_COUNT_MIN}
+                max={PROJECT_TOTAL_PANEL_COUNT_MAX}
+                value={settingsPanelCount}
+                onChange={(e) => setSettingsPanelCount(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+              <p className="hint">
+                최소 {PROJECT_TOTAL_PANEL_COUNT_MIN}장 ~ 최대 {PROJECT_TOTAL_PANEL_COUNT_MAX}장
+              </p>
+            </div>
+            <div className="field">
+              <label>등장인물</label>
+              {allCharacters.map((c) => (
+                <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}>
+                  <input
+                    type="checkbox"
+                    checked={settingsCharacterIds.includes(c.id)}
+                    onChange={() => toggleSettingsCharacter(c.id)}
+                  />
+                  {c.display_name} <span style={{ color: "var(--color-text-muted)", fontSize: 13 }}>({c.role})</span>
+                </label>
+              ))}
+              <button type="button" className="btn" style={{ marginTop: 6 }} onClick={() => (window.location.href = "/toon/characters/new")}>
+                + 새로운 등장인물 추가
+              </button>
+            </div>
+            <div className="form-actions">
+              <button type="button" className="btn" onClick={() => setShowSettingsForm(false)} disabled={settingsPending}>
+                취소
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => submitSettings(false)}
+                disabled={settingsPending || settingsTopic.trim().length === 0 || settingsCharacterIds.length === 0}
+              >
+                {settingsPending ? "처리 중..." : "수정하고 스토리보드 다시 만들기"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {!hasStoryboard && (
         <div className="card">
-          <button type="button" className="btn btn-primary btn-block" onClick={handleGenerate} disabled={busy}>
+          <button type="button" className="btn btn-primary btn-block" onClick={() => handleGenerate()} disabled={busy}>
             {generating ? "스토리보드를 만들고 있어요..." : "스토리보드 생성하기"}
           </button>
         </div>
@@ -207,116 +401,169 @@ export default function StoryboardEditor({
             </div>
           )}
 
-          {panels.map((panel, index) => (
-            <div className="card" key={index}>
-              <div className="topbar" style={{ padding: "0 0 8px" }}>
-                <h2 style={{ fontSize: 15, margin: 0 }}>컷 {panel.panel_number}</h2>
-                <div style={{ display: "flex", gap: 4 }}>
-                  <button type="button" className="btn" onClick={() => movePanel(index, -1)} disabled={index === 0 || busy}>
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => movePanel(index, 1)}
-                    disabled={index === panels.length - 1 || busy}
-                  >
-                    ↓
-                  </button>
+          <p className="hint">표지 포함 최소 {PROJECT_TOTAL_PANEL_COUNT_MIN}장 ~ 최대 {PROJECT_TOTAL_PANEL_COUNT_MAX}장까지 만들 수 있어요.</p>
+
+          {panels.map((panel, index) => {
+            const isCover = panel.panel_type === "cover";
+            return (
+              <div className="card" key={index} style={isCover ? { borderColor: "var(--color-primary)", borderWidth: 2 } : undefined}>
+                <div className="topbar" style={{ padding: "0 0 8px" }}>
+                  <h2 style={{ fontSize: 15, margin: 0 }}>{isCover ? "표지" : `컷 ${panel.panel_number - (panels[0]?.panel_type === "cover" ? 1 : 0)}`}</h2>
+                  {!isCover && (
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => movePanel(index, -1)}
+                        disabled={busy || (panels[0]?.panel_type === "cover" ? index <= 1 : index === 0)}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => movePanel(index, 1)}
+                        disabled={index === panels.length - 1 || busy}
+                      >
+                        ↓
+                      </button>
+                      <button type="button" className="btn" onClick={() => removeScene(index)} disabled={busy}>
+                        삭제
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </div>
 
-              <div className="field">
-                <label>장면</label>
-                <textarea
-                  className="textarea"
-                  value={panel.scene_description}
-                  onChange={(e) => updatePanel(index, { scene_description: e.target.value })}
-                  maxLength={300}
-                />
-              </div>
-
-              <div className="field">
-                <label>등장인물</label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                  {characters.map((c) => (
-                    <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                {isCover && (
+                  <>
+                    <div className="field">
+                      <label>표지 제목</label>
                       <input
-                        type="checkbox"
-                        checked={panel.character_ids.includes(c.id)}
-                        onChange={() => toggleCharacterInPanel(index, c.id)}
+                        className="input"
+                        value={panel.cover_title ?? ""}
+                        onChange={(e) => updatePanel(index, { cover_title: e.target.value || null })}
+                        maxLength={60}
                       />
-                      {c.display_name}
-                    </label>
-                  ))}
+                    </div>
+                    <div className="field">
+                      <label>부제목 (선택)</label>
+                      <input
+                        className="input"
+                        value={panel.cover_subtitle ?? ""}
+                        onChange={(e) => updatePanel(index, { cover_subtitle: e.target.value || null })}
+                        maxLength={100}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="field">
+                  <label>{isCover ? "표지 장면 설명" : "장면"}</label>
+                  <textarea
+                    className="textarea"
+                    value={panel.scene_description}
+                    onChange={(e) => updatePanel(index, { scene_description: e.target.value })}
+                    maxLength={300}
+                  />
                 </div>
-              </div>
 
-              <div className="field">
-                <label>표정/행동</label>
-                <input
-                  className="input"
-                  value={panel.expression}
-                  onChange={(e) => updatePanel(index, { expression: e.target.value })}
-                  maxLength={300}
-                />
-              </div>
-
-              <div className="field">
-                <label>대사</label>
-                {panel.dialogue.map((line) => (
-                  <div key={line.id} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                    <select
-                      className="input"
-                      style={{ maxWidth: 100 }}
-                      value={line.character_id}
-                      onChange={(e) => updateDialogueLine(index, line.id, { character_id: e.target.value })}
-                    >
-                      {panel.character_ids.map((cid) => (
-                        <option key={cid} value={cid}>
-                          {charById.get(cid)?.display_name ?? "?"}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="input"
-                      value={line.text}
-                      onChange={(e) => updateDialogueLine(index, line.id, { text: e.target.value })}
-                      maxLength={200}
-                    />
-                    <button type="button" className="btn" onClick={() => removeDialogueLine(index, line.id)}>
-                      삭제
-                    </button>
+                <div className="field">
+                  <label>등장인물 (최대 {MAX_CHARACTERS_PER_PANEL}명)</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                    {characters.map((c) => (
+                      <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <input
+                          type="checkbox"
+                          checked={panel.character_ids.includes(c.id)}
+                          onChange={() => toggleCharacterInPanel(index, c.id)}
+                        />
+                        {c.display_name}
+                      </label>
+                    ))}
                   </div>
-                ))}
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => addDialogueLine(index)}
-                  disabled={panel.character_ids.length === 0}
-                >
-                  + 대사 추가
-                </button>
-              </div>
+                </div>
 
-              <div className="field">
-                <label>내레이션</label>
-                <input
-                  className="input"
-                  value={panel.narration ?? ""}
-                  onChange={(e) => updatePanel(index, { narration: e.target.value || null })}
-                  maxLength={200}
-                />
+                {!isCover && (
+                  <>
+                    <div className="field">
+                      <label>표정/행동</label>
+                      <input
+                        className="input"
+                        value={panel.expression}
+                        onChange={(e) => updatePanel(index, { expression: e.target.value })}
+                        maxLength={300}
+                      />
+                    </div>
+
+                    <div className="field">
+                      <label>대사</label>
+                      {panel.dialogue.map((line) => (
+                        <div key={line.id} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                          <select
+                            className="input"
+                            style={{ maxWidth: 100 }}
+                            value={line.character_id}
+                            onChange={(e) => updateDialogueLine(index, line.id, { character_id: e.target.value })}
+                          >
+                            {panel.character_ids.map((cid) => (
+                              <option key={cid} value={cid}>
+                                {charById.get(cid)?.display_name ?? "?"}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            className="input"
+                            value={line.text}
+                            onChange={(e) => updateDialogueLine(index, line.id, { text: e.target.value })}
+                            maxLength={200}
+                          />
+                          <button type="button" className="btn" onClick={() => removeDialogueLine(index, line.id)}>
+                            삭제
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => addDialogueLine(index)}
+                        disabled={panel.character_ids.length === 0}
+                      >
+                        + 대사 추가
+                      </button>
+                    </div>
+
+                    <div className="field">
+                      <label>내레이션</label>
+                      <input
+                        className="input"
+                        value={panel.narration ?? ""}
+                        onChange={(e) => updatePanel(index, { narration: e.target.value || null })}
+                        maxLength={200}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
+
+          <div className="card">
+            <button
+              type="button"
+              className="btn btn-block"
+              onClick={addScene}
+              disabled={busy || panels.length >= PROJECT_TOTAL_PANEL_COUNT_MAX}
+            >
+              + 장면 추가
+            </button>
+          </div>
 
           <div className="card">
             <div className="form-actions" style={{ marginTop: 0 }}>
               <button type="button" className="btn btn-primary" onClick={handleSave} disabled={busy}>
                 {saving ? "저장 중..." : "스토리보드 저장"}
               </button>
-              <button type="button" className="btn" onClick={handleGenerate} disabled={busy}>
+              <button type="button" className="btn" onClick={() => handleGenerate()} disabled={busy}>
                 {generating ? "생성 중..." : "다시 만들기"}
               </button>
             </div>

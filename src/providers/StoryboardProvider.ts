@@ -7,14 +7,25 @@ export interface StoryboardCharacterContext {
   speaking_style: string | null;
 }
 
+/**
+ * generateStoryboard()에 전달하는 캐릭터는 display_name 문자열 매칭이
+ * 아니라 CHARACTER_A/B/C... 식별자로 지칭된다(characterIdentifier.ts
+ * 참조) — AI 응답의 characters/dialogue.character/cover.characters는
+ * 전부 이 identifier 문자열이어야 한다.
+ */
+export interface StoryboardIdentifiedCharacter extends StoryboardCharacterContext {
+  identifier: string;
+}
+
 export interface GenerateIdeasInput {
   characters: StoryboardCharacterContext[];
 }
 
 export interface GenerateStoryboardInput {
   topic: string;
-  panelCount: 6 | 8 | 10;
-  characters: StoryboardCharacterContext[];
+  /** 표지 포함 TOTAL 컷 수(6/8/10 고정이 아니라 2~20 범위 — projectPanelCountConfig.ts 참조). */
+  panelCount: number;
+  characters: StoryboardIdentifiedCharacter[];
 }
 
 /**

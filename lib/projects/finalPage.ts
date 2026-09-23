@@ -27,6 +27,7 @@ async function requireOwnedProject(projectId: string): Promise<RequireOwnedProje
 
 export interface FinalPanelView {
   panelNumber: number;
+  panelType: "cover" | "scene";
   finalSignedUrl: string | null;
   storagePath: string | null;
 }
@@ -63,7 +64,12 @@ export async function getFinalPageData(projectId: string): Promise<FinalPageData
       const { data: signed } = await supabase.storage.from(PANELS_BUCKET).createSignedUrl(panel.image_url, 3600);
       signedUrl = signed?.signedUrl ?? null;
     }
-    panelViews.push({ panelNumber: panel.panel_number, finalSignedUrl: signedUrl, storagePath: panel.image_url });
+    panelViews.push({
+      panelNumber: panel.panel_number,
+      panelType: panel.panel_type,
+      finalSignedUrl: signedUrl,
+      storagePath: panel.image_url,
+    });
   }
 
   const caption = await getCaptionView(project.id);

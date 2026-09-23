@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "../../../../lib/supabase/server";
 import { getProject, getProjectCharacters, getProjectPanels } from "../../../../lib/projects/service";
 import { checkProjectGenerationReadiness, getPanelImagesSummary } from "../../../../lib/projects/panelImages";
+import { getCharacters } from "../../../../lib/characters/service";
 import StoryboardEditor from "./StoryboardEditor";
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -17,6 +18,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
 
   const characters = await getProjectCharacters(supabase, id);
   const panels = await getProjectPanels(supabase, id);
+  const allCharacters = await getCharacters(supabase);
 
   let panelImagesData = null;
   if (project.status === "confirmed" && panels.length > 0) {
@@ -42,6 +44,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
       <StoryboardEditor
         project={project}
         characters={characters}
+        allCharacters={allCharacters.map((c) => ({ id: c.id, display_name: c.display_name, role: c.role ?? "" }))}
         initialPanels={panels}
         panelImagesData={panelImagesData}
       />

@@ -233,6 +233,37 @@ describe("generatePanelImageAction", () => {
     expect(promptSentToProvider).not.toContain("내레이션 문장");
   });
 
+  test("panel_type='cover'면 표지 전용 안내(COVER_COMPOSITION_NOTE)가 prompt에 포함된다", async () => {
+    const coverPanel = { ...OWNED_PANEL, panel_type: "cover" as const };
+    currentSupabase = createSupabaseMock({ panel: coverPanel, approvedSheetStoragePath: "user-a/char-a/sheet.png" });
+    getProjectPanelsMock.mockResolvedValue([coverPanel]);
+    const { generatePanelImageAction } = await import("../../lib/projects/panelImages");
+
+    await generatePanelImageAction("panel-1");
+    const promptSentToProvider = generateMock.mock.calls[0][0] as string;
+    expect(promptSentToProvider).toMatch(/COVER image for the whole episode/);
+  });
+
+  test("panel_type='scene'(본문)이면 표지 전용 안내가 prompt에 없다", async () => {
+    const { generatePanelImageAction } = await import("../../lib/projects/panelImages");
+
+    await generatePanelImageAction("panel-1");
+    const promptSentToProvider = generateMock.mock.calls[0][0] as string;
+    expect(promptSentToProvider).not.toMatch(/COVER image for the whole episode/);
+  });
+
+  test("등장인물이 4명 초과인 컷은 명확한 메시지와 함께 차단된다", async () => {
+    const overCrowdedPanel = { ...OWNED_PANEL, character_ids: ["char-a", "char-b", "char-c", "char-d", "char-e"] };
+    getProjectPanelsMock.mockResolvedValue([overCrowdedPanel]);
+    currentSupabase = createSupabaseMock({ panel: overCrowdedPanel, approvedSheetStoragePath: "user-a/char-a/sheet.png" });
+    const { generatePanelImageAction } = await import("../../lib/projects/panelImages");
+
+    const result = await generatePanelImageAction("panel-1");
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/최대 4명/);
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
   test("이미지 생성 실패 시 toon_panel_images에 아무것도 저장하지 않는다", async () => {
     generateMock.mockRejectedValue(new Error("provider boom"));
     const { generatePanelImageAction } = await import("../../lib/projects/panelImages");

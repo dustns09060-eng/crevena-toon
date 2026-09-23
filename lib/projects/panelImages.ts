@@ -7,9 +7,10 @@ import { getProject, getProjectPanels } from "./service";
 import { getCharacter } from "../characters/service";
 import { characterHasSavedBible, toBibleForPrompt } from "../characters/bibleUtils";
 import { getCharacterSheetProvider } from "../../src/providers/characterSheetProviderRegistry";
-import { buildPanelImagePrompt } from "../../src/providers/panelImagePromptBuilder";
+import { buildPanelImagePrompt, COVER_COMPOSITION_NOTE } from "../../src/providers/panelImagePromptBuilder";
 import { getToonStyle } from "../../src/providers/characterSheetStyle";
 import { DEFAULT_PANEL_ASPECT_RATIO } from "../../src/providers/panelImageConfig";
+import { MAX_CHARACTERS_PER_PANEL } from "../../src/providers/projectPanelCountConfig";
 import type { ToonCharacter, ToonPanel, ToonProject } from "../../src/db/types";
 
 const REFERENCES_SHEET_BUCKET = "toon-character-sheets";
@@ -77,6 +78,9 @@ export async function checkProjectGenerationReadiness(
   }
   panels.forEach((p, i) => {
     if (p.panel_number !== i + 1) errors.push("panel_number가 1부터 연속되지 않습니다.");
+    if (p.character_ids.length > MAX_CHARACTERS_PER_PANEL) {
+      errors.push(`컷 ${p.panel_number}에 등장인물이 최대 ${MAX_CHARACTERS_PER_PANEL}명을 초과합니다.`);
+    }
   });
 
   const characterIds = [...new Set(panels.flatMap((p) => p.character_ids))];
@@ -181,6 +185,7 @@ export async function generatePanelImageAction(panelId: string): Promise<Generat
       characters: promptCharacters,
       style: style.prompt,
       aspectRatio: DEFAULT_PANEL_ASPECT_RATIO,
+      coverNote: panel.panel_type === "cover" ? COVER_COMPOSITION_NOTE : undefined,
     });
 
     const provider = getCharacterSheetProvider();
