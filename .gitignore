@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.local
+.env.*
+!.env.example
+dist/
+.next/
+tsconfig.tsbuildinfo
+.staging-test-users.json
+.browser-test-user.json
+.mobile-test-user.json
+references/
+output/

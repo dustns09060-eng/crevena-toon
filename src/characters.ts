@@ -1,0 +1,65 @@
+import type { CharacterBible } from "./types.js";
+
+const STYLE_SUFFIX =
+  "flat digital illustration, warm pastel color palette, soft clean line art, Instagram webtoon / daily-life comic style, consistent art style across all panels";
+
+export const CHARACTERS: CharacterBible[] = [
+  {
+    character_id: "mom",
+    display_name: "엄마",
+    role: "주인공, 두 아이의 엄마",
+    age_group: "30대 성인 여성",
+    hairstyle: "어깨를 넘는 길이의 생머리를 하나로 깔끔하게 넘겨 묶음, 잔머리 없이 단정함",
+    hair_color: "짙은 검은색",
+    face_features:
+      "둥근 얼굴형, 또렷한 쌍꺼풀 없는 큰 눈, 자연스러운 일자 눈썹, 화장기 적은 맨얼굴, 볼에 은은한 홍조",
+    body_type: "보통 체형의 성인 여성, 표준 키",
+    representative_outfit: "검은색 크루넥 반팔 티셔츠 (어깨에 흰색 3선 스트라이프 포인트), 캐주얼한 홈웨어 느낌",
+    personality: "다정하지만 육아에 지쳐있고, 가끔 멘붕이 오지만 아이들 앞에서는 씩씩함",
+    speaking_style: "부드럽고 다정한 존댓말 섞인 반말, 혼잣말이 많음",
+    visual_prompt: `30대 한국인 여성 캐릭터. 어깨 아래로 내려오는 검은 생머리를 하나로 넘겨 묶은 헤어스타일, 둥근 얼굴형에 크고 순한 눈매, 옅은 화장, 검은색 반팔 티셔츠(어깨에 흰 스트라이프) 착용, 평범한 체형. ${STYLE_SUFFIX}`,
+    negative_constraints:
+      "실제 사진처럼 사실적인 인물 렌더링 금지(일러스트 스타일 유지), 다른 캐릭터(첫째/둘째)와 얼굴형·나이대 혼동 금지, 장면마다 헤어스타일과 머리색이 바뀌지 않도록 유지, 이미지 안에 한글 텍스트·대사·말풍선을 그리지 않음",
+    reference_images: ["references/mom.jpg"],
+  },
+  {
+    character_id: "first",
+    display_name: "첫째",
+    role: "첫째 아들, 유치원생",
+    age_group: "미취학 아동 (4~5세 남아)",
+    hairstyle: "짧은 검은 단발머리, 앞머리가 이마를 살짝 덮는 내추럴한 커트",
+    hair_color: "짙은 검은색",
+    face_features: "둥글고 통통한 볼, 크고 또렷한 검은 눈동자, 옅은 눈썹, 장난기 있는 표정",
+    body_type: "또래보다 통통한 유아 체형, 작은 키",
+    representative_outfit: "체리(딸기) 패턴이 프린트된 짙은 남색 반팔 상하의 세트(홈웨어)",
+    personality: "밝고 활발하며 장난꾸러기, 동생을 잘 챙기려 하지만 가끔 티격태격함",
+    speaking_style: "짧고 씩씩한 어린이 말투, 자주 웃고 크게 말함",
+    visual_prompt: `4~5세 한국인 남자아이 캐릭터. 짧은 검은 단발머리에 이마를 살짝 덮는 앞머리, 둥글고 통통한 볼, 크고 초롱초롱한 눈, 체리 패턴이 있는 짙은 남색 홈웨어 상하의 착용, 통통한 유아 체형. ${STYLE_SUFFIX}`,
+    negative_constraints:
+      "실사 렌더링 금지(일러스트 스타일 유지), 둘째(아기)나 엄마와 나이대·체형 혼동 금지, 장면마다 헤어스타일이 바뀌지 않도록 유지, 이미지 안에 한글 텍스트·대사·말풍선을 그리지 않음",
+    reference_images: ["references/kids.jpg", "references/mom.jpg"],
+  },
+  {
+    character_id: "second",
+    display_name: "둘째",
+    role: "둘째, 영아",
+    age_group: "영아 (돌 전후, 약 6~12개월)",
+    hairstyle: "머리숱이 거의 없는 짧은 배냇머리",
+    hair_color: "짙은 갈색~검은색",
+    face_features: "통통하고 동그란 볼, 큰 눈, 입에 노리개 젖꼭지(공갈젖꼭지)를 물고 있는 경우가 많음",
+    body_type: "통통한 아기 체형, 기거나 앉아있는 자세가 많음",
+    representative_outfit: "연한 연두색 반팔 우주복, 회색 턱받이(비브)",
+    personality: "순하고 호기심 많은 아기, 낯선 것에 눈을 크게 뜨고 관찰함",
+    speaking_style: "말을 하지 못함(옹알이), 표정과 몸짓으로 표현",
+    visual_prompt: `생후 6~12개월 한국인 영아 캐릭터. 머리숱이 적은 짧은 배냇머리, 통통하고 동그란 볼과 큰 눈, 연한 연두색 우주복과 회색 턱받이 착용, 통통한 아기 체형, 종종 공갈젖꼭지를 물고 있음. ${STYLE_SUFFIX}`,
+    negative_constraints:
+      "실사 렌더링 금지(일러스트 스타일 유지), 첫째(유아)나 엄마와 나이대·체형 혼동 금지, 갑자기 유아 이상으로 나이 들어 보이지 않도록 유지, 이미지 안에 한글 텍스트·대사·말풍선을 그리지 않음",
+    reference_images: ["references/kids.jpg"],
+  },
+];
+
+export function getCharacter(id: string): CharacterBible {
+  const found = CHARACTERS.find((c) => c.character_id === id);
+  if (!found) throw new Error(`Unknown character_id: ${id}`);
+  return found;
+}

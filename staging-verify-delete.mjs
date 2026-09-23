@@ -1,0 +1,12 @@
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
+import pg from "pg";
+const client = new pg.Client({ connectionString: process.env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false } });
+await client.connect();
+const chars = await client.query(`select count(*)::int as n from toon_characters;`);
+const refs = await client.query(`select count(*)::int as n from toon_character_references;`);
+const objs = await client.query(`select name from storage.objects where bucket_id='toon-references';`);
+console.log("remaining characters:", chars.rows[0].n);
+console.log("remaining reference rows:", refs.rows[0].n);
+console.log("remaining storage objects:", objs.rows.length, objs.rows.map(r=>r.name));
+await client.end();
