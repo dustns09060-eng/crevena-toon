@@ -3,10 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "../supabase/server";
 import { getProject, getProjectCharacters, getProjectPanels } from "./service";
-import { getDefaultBubbleForIndex, getDefaultNarrationBubble } from "../editor/bubbleLayout";
+import { getDefaultBubbleForIndex, getDefaultCoverTitleBubble, getDefaultNarrationBubble } from "../editor/bubbleLayout";
 import { checkEditorReadiness } from "./editorUtils";
-import { validateDialogueCharacterIds, validateNarrationBubble, validateToonDialogue } from "../../src/db/validation";
-import type { ToonDialogueItem, ToonNarrationBubble } from "../../src/db/types";
+import {
+  validateCoverTitleBubble,
+  validateDialogueCharacterIds,
+  validateNarrationBubble,
+  validateToonDialogue,
+} from "../../src/db/validation";
+import type { ToonCoverTitleBubble, ToonDialogueItem, ToonNarrationBubble, ToonPanelType } from "../../src/db/types";
 
 /**
  * STEP 7 — 이 파일은 절대 AI Provider(캐릭터 분석/스토리보드/이미지 생성)를
@@ -37,10 +42,14 @@ async function requireOwnedProject(projectId: string): Promise<RequireOwnedProje
 export interface EditorPanelData {
   id: string;
   panelNumber: number;
+  panelType: ToonPanelType;
   rawImageSignedUrl: string | null;
   dialogue: ToonDialogueItem[];
   narration: string | null;
   narrationBubble: ToonNarrationBubble | null;
+  coverTitle: string | null;
+  coverSubtitle: string | null;
+  coverTitleBubble: ToonCoverTitleBubble | null;
 }
 
 export interface EditorProjectData {
@@ -85,14 +94,20 @@ export async function getPanelEditorData(projectId: string): Promise<EditorProje
       bubble: item.bubble ?? getDefaultBubbleForIndex(index),
     }));
     const narrationBubble = panel.narration ? (panel.narration_bubble ?? getDefaultNarrationBubble()) : null;
+    const coverTitleBubble =
+      panel.panel_type === "cover" && panel.cover_title ? (panel.cover_title_bubble ?? getDefaultCoverTitleBubble()) : null;
 
     panelData.push({
       id: panel.id,
       panelNumber: panel.panel_number,
+      panelType: panel.panel_type,
       rawImageSignedUrl: signedUrl,
       dialogue,
       narration: panel.narration,
       narrationBubble,
+      coverTitle: panel.cover_title,
+      coverSubtitle: panel.cover_subtitle,
+      coverTitleBubble,
     });
   }
 
@@ -148,6 +163,49 @@ export async function saveBubbleLayoutAction(
   const { error: updateErr } = await supabase
     .from("toon_panels")
     .update({ dialogue, narration, narration_bubble: narrationBubble })
+    .eq("id", panelId);
+  if (updateErr) return { ok: false, message: "저장에 실패했습니다." };
+
+  revalidatePath(`/toon/projects/${project.id}/editor`);
+  return { ok: true };
+}
+
+/**
+ * 019 마이그레이션 — cover_title/cover_subtitle/cover_title_bubble은
+ * dialogue/narration과 의미가 완전히 달라(표지 전용, panel_type='cover'인
+ * 컷에서만 쓰임) saveBubbleLayoutAction과 별도 액션으로 분리한다.
+ * scene 컷을 저장할 때 이 필드들을 실수로 건드릴 걱정도 없어진다.
+ */
+export async function saveCoverLayoutAction(
+  panelId: string,
+  coverTitle: string | null,
+  coverSubtitle: string | null,
+  coverTitleBubble: ToonCoverTitleBubble | null
+): Promise<SaveBubbleLayoutState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, message: "로그인이 필요합니다." };
+
+  const { data: panelRow, error: fetchErr } = await supabase
+    .from("toon_panels")
+    .select("id, project_id")
+    .eq("id", panelId)
+    .maybeSingle();
+  if (fetchErr || !panelRow) return { ok: false, message: "컷을 찾을 수 없거나 접근 권한이 없습니다." };
+
+  const project = await getProject(supabase, panelRow.project_id);
+  if (!project) return { ok: false, message: "컷을 찾을 수 없거나 접근 권한이 없습니다." };
+
+  const bubbleValidation = validateCoverTitleBubble(coverTitleBubble);
+  if (!bubbleValidation.valid) {
+    return { ok: false, message: `표지 배치가 올바르지 않습니다: ${bubbleValidation.errors.join(", ")}` };
+  }
+
+  const { error: updateErr } = await supabase
+    .from("toon_panels")
+    .update({ cover_title: coverTitle, cover_subtitle: coverSubtitle, cover_title_bubble: coverTitleBubble })
     .eq("id", panelId);
   if (updateErr) return { ok: false, message: "저장에 실패했습니다." };
 

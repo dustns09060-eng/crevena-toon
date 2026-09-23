@@ -1,26 +1,42 @@
 "use client";
 
-import type { ToonDialogueItem, ToonNarrationBubble } from "../../src/db/types";
+import type { ToonCoverTitleBubble, ToonDialogueItem, ToonNarrationBubble, ToonPanelType } from "../../src/db/types";
 import { wrapText } from "./bubbleLayout";
+import { type ContainRect, computeContainRect, computeCoverRect, normalizedRectToCanvasPx, scaleFontSizeToForeground } from "./containFit";
 
 /**
- * STEP 7 §8 — 미리보기와 최종 이미지가 반드시 같은 결과를 내야 하므로,
- * "이미지 + 말풍선 + 내레이션"을 그리는 로직을 이 함수 하나로 통일한다.
- * 미리보기용 <canvas>와 "최종 이미지 만들기"용 <canvas>가 동일한
- * 해상도(FINAL_IMAGE_SIZE)로 이 함수를 호출하고, 화면에는 CSS로만
- * 축소해서 보여준다 — 그래야 두 계산이 절대 어긋나지 않는다.
+ * STEP 7 §8, STEP 7 §21 — 미리보기와 최종 이미지가 반드시 같은 결과를
+ * 내야 하므로, "배경 + 원본 이미지 + 말풍선 + 내레이션 + 표지 텍스트"를
+ * 그리는 로직을 이 함수 하나로 통일한다. 미리보기용 <canvas>와
+ * "최종 이미지 만들기"용 <canvas>가 동일한 해상도(1080x1350, Instagram
+ * Feed 4:5)로 이 함수를 호출하고, 화면에는 CSS로만 축소해서 보여준다 —
+ * 그래야 두 계산이 절대 어긋나지 않는다.
+ *
+ * approved 원본 이미지는 실제 생성 비율(예: 864x1184)이 canvas 비율과
+ * 다를 수 있으므로, stretch/crop 없이 CONTAIN 방식으로 배치하고 남는
+ * 여백은 같은 이미지를 흐리게 확대한 배경으로 채운다.
  */
 
 export interface RenderPanelInput {
   imageObjectUrl: string;
+  panelType: ToonPanelType;
   dialogue: ToonDialogueItem[];
   narration: string | null;
   narrationBubble: ToonNarrationBubble | null;
+  coverTitle: string | null;
+  coverSubtitle: string | null;
+  coverTitleBubble: ToonCoverTitleBubble | null;
   width: number;
   height: number;
 }
 
 const FONT_FAMILY = "'Noto Sans KR', sans-serif";
+/** 배경 blur 강도 — canvas 폭에 비례시켜 해상도가 달라져도 시각적으로 같은 강도를 유지한다. */
+const BACKGROUND_BLUR_RATIO = 0.03;
+/** blur 배경이 foreground보다 튀지 않도록 살짝 어둡게 덮는 정도. 특정 색조가 아닌 순수 검정 반투명이라 화풍(색감) 자체는 바꾸지 않는다. */
+const BACKGROUND_DARKEN_ALPHA = 0.28;
+/** 표지 부제 글자 크기 = 제목 글자 크기 * 이 비율. cover_title_bubble에는 font_size 필드가 하나뿐이라(스키마 변경 없이) 제목 크기에서 파생시킨다. */
+const COVER_SUBTITLE_FONT_RATIO = 0.42;
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -60,14 +76,14 @@ function drawWrappedText(
   ctx: CanvasRenderingContext2D,
   text: string,
   box: { x: number; y: number; width: number; height: number },
-  fontSizePx: number
+  fontSizePx: number,
+  paddingRatio = 0.1
 ) {
   ctx.font = `${fontSizePx}px ${FONT_FAMILY}`;
-  ctx.fillStyle = "#111111";
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
 
-  const paddingX = box.width * 0.1;
+  const paddingX = box.width * paddingRatio;
   const maxWidth = box.width - paddingX * 2;
   const lines = wrapText((t) => ctx.measureText(t).width, text, maxWidth);
 
@@ -79,19 +95,34 @@ function drawWrappedText(
   lines.forEach((line, i) => {
     ctx.fillText(line, centerX, startY + i * lineHeight);
   });
+
+  return { lineCount: lines.length, lineHeight };
 }
 
-function drawBubble(ctx: CanvasRenderingContext2D, item: ToonDialogueItem, canvasWidth: number, canvasHeight: number) {
+/**
+ * 배경 레이어: 같은 원본 이미지를 canvas 전체를 채우도록(COVER) 확대해
+ * 강하게 흐리고 살짝 어둡게 덮는다. foreground(선명한 CONTAIN 이미지)의
+ * 시각적 보조 역할만 하도록, foreground보다 절대 선명하지 않게 한다.
+ */
+function drawBlurredBackground(ctx: CanvasRenderingContext2D, img: HTMLImageElement, canvasWidth: number, canvasHeight: number) {
+  const cover = computeCoverRect(canvasWidth, canvasHeight, img.naturalWidth, img.naturalHeight);
+  const blurPx = Math.max(16, Math.round(canvasWidth * BACKGROUND_BLUR_RATIO));
+
+  ctx.save();
+  ctx.filter = `blur(${blurPx}px)`;
+  ctx.drawImage(img, cover.offsetX, cover.offsetY, cover.drawWidth, cover.drawHeight);
+  ctx.filter = "none";
+  ctx.fillStyle = `rgba(0, 0, 0, ${BACKGROUND_DARKEN_ALPHA})`;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  ctx.restore();
+}
+
+function drawBubble(ctx: CanvasRenderingContext2D, item: ToonDialogueItem, foreground: ContainRect) {
   const bubble = item.bubble;
   if (!bubble) return;
 
-  const px = {
-    x: bubble.x * canvasWidth,
-    y: bubble.y * canvasHeight,
-    width: bubble.width * canvasWidth,
-    height: bubble.height * canvasHeight,
-  };
-  const fontSizePx = ((bubble.font_size ?? 28) / 1080) * canvasWidth;
+  const px = normalizedRectToCanvasPx(bubble, foreground);
+  const fontSizePx = scaleFontSizeToForeground(bubble.font_size ?? 28, foreground.drawWidth);
   const style = bubble.style ?? "round";
 
   ctx.save();
@@ -105,23 +136,15 @@ function drawBubble(ctx: CanvasRenderingContext2D, item: ToonDialogueItem, canva
   ctx.stroke();
   ctx.restore();
 
+  ctx.save();
+  ctx.fillStyle = "#111111";
   drawWrappedText(ctx, item.text, px, fontSizePx);
+  ctx.restore();
 }
 
-function drawNarration(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  bubble: ToonNarrationBubble,
-  canvasWidth: number,
-  canvasHeight: number
-) {
-  const px = {
-    x: bubble.x * canvasWidth,
-    y: bubble.y * canvasHeight,
-    width: bubble.width * canvasWidth,
-    height: bubble.height * canvasHeight,
-  };
-  const fontSizePx = ((bubble.font_size ?? 24) / 1080) * canvasWidth;
+function drawNarration(ctx: CanvasRenderingContext2D, text: string, bubble: ToonNarrationBubble, foreground: ContainRect) {
+  const px = normalizedRectToCanvasPx(bubble, foreground);
+  const fontSizePx = scaleFontSizeToForeground(bubble.font_size ?? 24, foreground.drawWidth);
 
   ctx.save();
   ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
@@ -131,21 +154,69 @@ function drawNarration(
 
   ctx.save();
   ctx.fillStyle = "#ffffff";
-  ctx.font = `${fontSizePx}px ${FONT_FAMILY}`;
-  ctx.textBaseline = "middle";
-  ctx.textAlign = "center";
-  const paddingX = px.width * 0.06;
-  const maxWidth = px.width - paddingX * 2;
-  const lines = wrapText((t) => ctx.measureText(t).width, text, maxWidth);
-  const lineHeight = fontSizePx * 1.3;
-  const totalHeight = lines.length * lineHeight;
-  const startY = px.y + px.height / 2 - totalHeight / 2 + lineHeight / 2;
-  const centerX = px.x + px.width / 2;
-  lines.forEach((line, i) => ctx.fillText(line, centerX, startY + i * lineHeight));
+  drawWrappedText(ctx, text, px, fontSizePx, 0.06);
   ctx.restore();
 }
 
-export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: RenderPanelInput): Promise<void> {
+/**
+ * 표지 텍스트: cover_title_bubble 영역 안에 제목(크게, 위)과 부제(작게,
+ * 아래)를 순서대로 그린다. 배경 박스는 그리지 않는다 — 표지 이미지
+ * 프롬프트가 애초에 제목이 들어갈 빈 여백을 남기도록 설계돼 있으므로,
+ * 텍스트에 옅은 그림자만 줘 가독성을 확보한다(화풍을 바꾸는 고정 배경색
+ * 없이도 밝은/어두운 배경 양쪽에서 읽히도록).
+ */
+function drawCoverText(
+  ctx: CanvasRenderingContext2D,
+  title: string,
+  subtitle: string | null,
+  bubble: ToonCoverTitleBubble,
+  foreground: ContainRect
+) {
+  const px = normalizedRectToCanvasPx(bubble, foreground);
+  const titleFontPx = scaleFontSizeToForeground(bubble.font_size ?? 44, foreground.drawWidth);
+  const subtitleFontPx = titleFontPx * COVER_SUBTITLE_FONT_RATIO;
+
+  ctx.save();
+  ctx.fillStyle = "#1a1a1a";
+  ctx.shadowColor = "rgba(255, 255, 255, 0.85)";
+  ctx.shadowBlur = titleFontPx * 0.3;
+
+  ctx.font = `700 ${titleFontPx}px ${FONT_FAMILY}`;
+  const titleLines = wrapText((t) => ctx.measureText(t).width, title, px.width * 0.92);
+  const titleLineHeight = titleFontPx * 1.25;
+  const titleBlockHeight = titleLines.length * titleLineHeight;
+
+  const spacing = subtitle ? titleFontPx * 0.35 : 0;
+  const subtitleLineHeight = subtitleFontPx * 1.25;
+  const subtitleLines = subtitle
+    ? wrapText((t) => ctx.measureText(t).width, subtitle, px.width * 0.92)
+    : [];
+  const subtitleBlockHeight = subtitleLines.length * subtitleLineHeight;
+
+  const totalHeight = titleBlockHeight + spacing + subtitleBlockHeight;
+  let y = px.y + px.height / 2 - totalHeight / 2;
+  const centerX = px.x + px.width / 2;
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.font = `700 ${titleFontPx}px ${FONT_FAMILY}`;
+  titleLines.forEach((line, i) => {
+    ctx.fillText(line, centerX, y + i * titleLineHeight);
+  });
+  y += titleBlockHeight + spacing;
+
+  if (subtitle) {
+    ctx.font = `400 ${subtitleFontPx}px ${FONT_FAMILY}`;
+    subtitleLines.forEach((line, i) => {
+      ctx.fillText(line, centerX, y + i * subtitleLineHeight);
+    });
+  }
+  ctx.restore();
+}
+
+export type RenderedForeground = ContainRect;
+
+export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: RenderPanelInput): Promise<RenderedForeground> {
   canvas.width = input.width;
   canvas.height = input.height;
 
@@ -163,15 +234,29 @@ export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: Rend
 
   const img = await loadImage(input.imageObjectUrl);
   ctx.clearRect(0, 0, input.width, input.height);
-  ctx.drawImage(img, 0, 0, input.width, input.height);
 
+  const foreground = computeContainRect(input.width, input.height, img.naturalWidth, img.naturalHeight);
+
+  // 1) 여백을 채우는 흐린 배경 (COVER, blur) — foreground보다 항상 덜 선명해야 한다.
+  drawBlurredBackground(ctx, img, input.width, input.height);
+
+  // 2) 원본 이미지 본체 (CONTAIN, stretch/crop 없음, 선명)
+  ctx.drawImage(img, foreground.offsetX, foreground.offsetY, foreground.drawWidth, foreground.drawHeight);
+
+  // 3) 대사/내레이션은 항상 foreground 좌표계 기준.
   for (const item of input.dialogue) {
-    drawBubble(ctx, item, input.width, input.height);
+    drawBubble(ctx, item, foreground);
+  }
+  if (input.narration && input.narrationBubble) {
+    drawNarration(ctx, input.narration, input.narrationBubble, foreground);
   }
 
-  if (input.narration && input.narrationBubble) {
-    drawNarration(ctx, input.narration, input.narrationBubble, input.width, input.height);
+  // 4) 표지 텍스트는 panel_type === 'cover'일 때만, scene 컷에는 절대 그리지 않는다.
+  if (input.panelType === "cover" && input.coverTitle && input.coverTitleBubble) {
+    drawCoverText(ctx, input.coverTitle, input.coverSubtitle, input.coverTitleBubble, foreground);
   }
+
+  return foreground;
 }
 
 export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {

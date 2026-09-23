@@ -82,12 +82,28 @@ const APPROVED_PANEL = {
   id: "panel-1",
   project_id: "proj-1",
   panel_number: 1,
+  panel_type: "scene",
   character_ids: [CHAR_A],
   raw_image_url: "user-a/proj-1/raw/1/gen-1.png",
   image_url: null,
   dialogue: [{ id: DIALOGUE_ID, character_id: CHAR_A, text: "안녕", bubble_type: "speech", bubble: null }],
   narration: "내레이션",
   narration_bubble: null,
+  cover_title: null,
+  cover_subtitle: null,
+  cover_title_bubble: null,
+};
+
+const COVER_PANEL = {
+  ...APPROVED_PANEL,
+  id: "panel-cover",
+  panel_number: 1,
+  panel_type: "cover",
+  dialogue: [],
+  narration: null,
+  cover_title: "육퇴하면 쉴 줄 알았지?",
+  cover_subtitle: "체험단 마감이라는 진짜 최종 보스의 등장",
+  cover_title_bubble: null,
 };
 
 function makePngFile(bytes: number[]): File {
@@ -241,6 +257,103 @@ describe("saveBubbleLayoutAction", () => {
 
     const result = await saveBubbleLayoutAction("panel-1", dialogue, null, null);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("getPanelEditorData — 표지(cover) 패널 필드", () => {
+  test("scene 패널은 panelType='scene'이고 coverTitleBubble이 null이다", async () => {
+    const { getPanelEditorData } = await import("../../lib/projects/editor");
+
+    const result = await getPanelEditorData("proj-1");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.panels[0].panelType).toBe("scene");
+      expect(result.panels[0].coverTitleBubble).toBeNull();
+    }
+  });
+
+  test("cover_title이 있는 cover 패널은 coverTitleBubble이 null이면 기본 배치를 계산해 채워준다", async () => {
+    getProjectPanelsMock.mockResolvedValue([COVER_PANEL]);
+    const { getPanelEditorData } = await import("../../lib/projects/editor");
+
+    const result = await getPanelEditorData("proj-1");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.panels[0].panelType).toBe("cover");
+      expect(result.panels[0].coverTitle).toBe("육퇴하면 쉴 줄 알았지?");
+      expect(result.panels[0].coverSubtitle).toBe("체험단 마감이라는 진짜 최종 보스의 등장");
+      expect(result.panels[0].coverTitleBubble).not.toBeNull();
+    }
+  });
+
+  test("이미 cover_title_bubble이 저장되어 있으면 기본값으로 덮어쓰지 않는다", async () => {
+    const savedBubble = { x: 0.1, y: 0.02, width: 0.8, height: 0.2, font_size: 50 };
+    getProjectPanelsMock.mockResolvedValue([{ ...COVER_PANEL, cover_title_bubble: savedBubble }]);
+    const { getPanelEditorData } = await import("../../lib/projects/editor");
+
+    const result = await getPanelEditorData("proj-1");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.panels[0].coverTitleBubble).toEqual(savedBubble);
+    }
+  });
+
+  test("cover_title이 아직 없는 cover 패널은 coverTitleBubble도 null로 둔다(억지로 기본값을 만들지 않음)", async () => {
+    getProjectPanelsMock.mockResolvedValue([{ ...COVER_PANEL, cover_title: null }]);
+    const { getPanelEditorData } = await import("../../lib/projects/editor");
+
+    const result = await getPanelEditorData("proj-1");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.panels[0].coverTitleBubble).toBeNull();
+    }
+  });
+});
+
+describe("saveCoverLayoutAction", () => {
+  test("타인 소유 패널은 거부된다", async () => {
+    currentSupabase = createSupabaseMock({ panel: null });
+    const { saveCoverLayoutAction } = await import("../../lib/projects/editor");
+
+    const result = await saveCoverLayoutAction("panel-cover", "제목", "부제", null);
+    expect(result.ok).toBe(false);
+  });
+
+  test("경계를 벗어난 cover_title_bubble(x+width>1)은 거부된다", async () => {
+    currentSupabase = createSupabaseMock({ panel: COVER_PANEL });
+    const { saveCoverLayoutAction } = await import("../../lib/projects/editor");
+
+    const result = await saveCoverLayoutAction("panel-cover", "제목", "부제", {
+      x: 0.8,
+      y: 0.05,
+      width: 0.5,
+      height: 0.15,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  test("정상 title/subtitle/bubble은 cover 전용 컬럼 3개만 저장한다(dialogue/narration은 건드리지 않음)", async () => {
+    currentSupabase = createSupabaseMock({ panel: COVER_PANEL });
+    const { saveCoverLayoutAction } = await import("../../lib/projects/editor");
+
+    const bubble = { x: 0.08, y: 0.04, width: 0.84, height: 0.18, font_size: 44 };
+    const result = await saveCoverLayoutAction("panel-cover", "육퇴하면 쉴 줄 알았지?", "체험단 마감이라는 진짜 최종 보스의 등장", bubble);
+    expect(result.ok).toBe(true);
+
+    const updates = currentSupabase._calls["toon_panels.update"] as Record<string, unknown>[];
+    expect(updates[0]).toEqual({
+      cover_title: "육퇴하면 쉴 줄 알았지?",
+      cover_subtitle: "체험단 마감이라는 진짜 최종 보스의 등장",
+      cover_title_bubble: bubble,
+    });
+  });
+
+  test("coverTitleBubble이 null이어도 저장할 수 있다(아직 배치 전 상태)", async () => {
+    currentSupabase = createSupabaseMock({ panel: COVER_PANEL });
+    const { saveCoverLayoutAction } = await import("../../lib/projects/editor");
+
+    const result = await saveCoverLayoutAction("panel-cover", "제목", null, null);
+    expect(result.ok).toBe(true);
   });
 });
 

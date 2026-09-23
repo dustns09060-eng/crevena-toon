@@ -1,4 +1,4 @@
-import type { ToonBubble, ToonBubbleTailDirection, ToonNarrationBubble } from "../../src/db/types";
+import type { ToonBubble, ToonBubbleTailDirection, ToonCoverTitleBubble, ToonNarrationBubble } from "../../src/db/types";
 
 /**
  * STEP 7 §3 — 말풍선 기본 배치 규칙.
@@ -18,6 +18,8 @@ const DEFAULT_BUBBLE_SLOTS: Array<{ x: number; y: number; width: number; height:
 
 export const DEFAULT_BUBBLE_FONT_SIZE = 28;
 export const DEFAULT_NARRATION_FONT_SIZE = 24;
+/** 표지 제목 폰트 크기(기준값). 부제는 렌더러에서 이 값의 일정 비율로 자동 축소해 그린다. */
+export const DEFAULT_COVER_TITLE_FONT_SIZE = 44;
 
 export function getDefaultBubbleForIndex(index: number): ToonBubble {
   const slot = DEFAULT_BUBBLE_SLOTS[index % DEFAULT_BUBBLE_SLOTS.length];
@@ -34,6 +36,16 @@ export function getDefaultBubbleForIndex(index: number): ToonBubble {
 
 export function getDefaultNarrationBubble(): ToonNarrationBubble {
   return { x: 0.08, y: 0.82, width: 0.84, height: 0.13, font_size: DEFAULT_NARRATION_FONT_SIZE };
+}
+
+/**
+ * STEP 7 §21 — 표지(cover) 이미지는 프롬프트 단계에서 상단에 제목용
+ * 여백을 의도적으로 비워두도록 지시한다(COVER_COMPOSITION_NOTE 참조).
+ * 그 여백 영역을 기본값으로 사용한다. 얼굴을 가리는지는 실제 이미지를
+ * 보고 개별 컷마다 재조정해야 하므로 어디까지나 초기값이다.
+ */
+export function getDefaultCoverTitleBubble(): ToonCoverTitleBubble {
+  return { x: 0.08, y: 0.04, width: 0.84, height: 0.18, font_size: DEFAULT_COVER_TITLE_FONT_SIZE };
 }
 
 interface ClampableRect {

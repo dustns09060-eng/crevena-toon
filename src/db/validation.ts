@@ -71,6 +71,33 @@ export function validateNarrationBubble(value: unknown): ToonDialogueValidationR
   };
 }
 
+/** 019 마이그레이션 — 표지 제목 블록. narration bubble과 형태가 동일하다. */
+export const ToonCoverTitleBubbleSchema = z
+  .object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().gt(0).max(1),
+    height: z.number().gt(0).max(1),
+    font_size: z.number().min(8).max(96).optional(),
+  })
+  .refine((b) => b.x + b.width <= 1, {
+    message: "x + width는 1을 초과할 수 없습니다",
+    path: ["width"],
+  })
+  .refine((b) => b.y + b.height <= 1, {
+    message: "y + height는 1을 초과할 수 없습니다",
+    path: ["height"],
+  });
+
+export function validateCoverTitleBubble(value: unknown): ToonDialogueValidationResult {
+  const result = ToonCoverTitleBubbleSchema.nullable().safeParse(value);
+  if (result.success) return { valid: true };
+  return {
+    valid: false,
+    errors: result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`),
+  };
+}
+
 export const ToonDialogueItemSchema = z.object({
   id: z.string().uuid(),
   character_id: z.string().uuid(),

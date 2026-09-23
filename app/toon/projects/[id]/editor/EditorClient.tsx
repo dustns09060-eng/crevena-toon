@@ -2,18 +2,25 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EditorPanelData } from "../../../../../lib/projects/editor";
-import { saveBubbleLayoutAction, saveFinalRenderAction } from "../../../../../lib/projects/editor";
+import { saveBubbleLayoutAction, saveCoverLayoutAction, saveFinalRenderAction } from "../../../../../lib/projects/editor";
 import {
   clampBubbleRect,
   getDefaultBubbleForIndex,
+  getDefaultCoverTitleBubble,
   getDefaultNarrationBubble,
 } from "../../../../../lib/editor/bubbleLayout";
-import { canvasToPngBlob, fetchAsObjectUrl, renderPanelToCanvas } from "../../../../../lib/editor/renderPanel";
+import { canvasToPngBlob, fetchAsObjectUrl, renderPanelToCanvas, type RenderedForeground } from "../../../../../lib/editor/renderPanel";
 import { getFinalImageDimensions } from "../../../../../src/providers/finalImageConfig";
 import type { ProjectCharacterContext } from "../../../../../lib/projects/service";
 import type { ToonBubbleStyle } from "../../../../../src/db/types";
 
-type Selection = { kind: "dialogue"; id: string } | { kind: "narration" } | null;
+type Selection = { kind: "dialogue"; id: string } | { kind: "narration" } | { kind: "cover" } | null;
+
+/** overlay(canvas와 같은 비율로 CSS 표시되는 컨테이너) 기준 좌표를 계산하기 위한 fallback.
+ * 이미지가 아직 로드되지 않아 foreground rect를 모를 때는 canvas 전체를 foreground로 간주한다. */
+function fallbackForeground(width: number, height: number): RenderedForeground {
+  return { offsetX: 0, offsetY: 0, drawWidth: width, drawHeight: height };
+}
 
 const BUBBLE_STYLE_LABELS: Record<ToonBubbleStyle, string> = {
   round: "일반 말풍선",
@@ -40,6 +47,7 @@ export default function EditorClient({
   const [rendering, setRendering] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [finalPreviewUrl, setFinalPreviewUrl] = useState<string | null>(null);
+  const [foregroundRect, setForegroundRect] = useState<RenderedForeground | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -79,21 +87,37 @@ export default function EditorClient({
         }
       }
       if (cancelled || !canvasRef.current) return;
-      await renderPanelToCanvas(canvasRef.current, {
+      const foreground = await renderPanelToCanvas(canvasRef.current, {
         imageObjectUrl: objectUrl,
+        panelType: panel.panelType,
         dialogue: panel.dialogue,
         narration: panel.narration,
         narrationBubble: panel.narrationBubble,
+        coverTitle: panel.coverTitle,
+        coverSubtitle: panel.coverSubtitle,
+        coverTitleBubble: panel.coverTitleBubble,
         width: dims.width,
         height: dims.height,
       });
+      if (!cancelled) setForegroundRect(foreground);
     }
     draw();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panel?.id, panel?.dialogue, panel?.narration, panel?.narrationBubble, dims.width, dims.height]);
+  }, [
+    panel?.id,
+    panel?.panelType,
+    panel?.dialogue,
+    panel?.narration,
+    panel?.narrationBubble,
+    panel?.coverTitle,
+    panel?.coverSubtitle,
+    panel?.coverTitleBubble,
+    dims.width,
+    dims.height,
+  ]);
 
   function goToPanel(index: number) {
     if (index === currentIndex) return;
@@ -104,6 +128,7 @@ export default function EditorClient({
     setSelection(null);
     setFinalPreviewUrl(null);
     setMessage(null);
+    setForegroundRect(null);
     setCurrentIndex(index);
   }
 
@@ -171,7 +196,32 @@ export default function EditorClient({
       ...p,
       dialogue: p.dialogue.map((d, i) => ({ ...d, bubble: getDefaultBubbleForIndex(i) })),
       narrationBubble: p.narration ? getDefaultNarrationBubble() : null,
+      coverTitleBubble: p.panelType === "cover" && p.coverTitle ? getDefaultCoverTitleBubble() : p.coverTitleBubble,
     }));
+  }
+
+  function handleCoverTitleChange(text: string) {
+    updatePanel(panel.id, (p) => ({
+      ...p,
+      coverTitle: text || null,
+      coverTitleBubble: text && !p.coverTitleBubble ? getDefaultCoverTitleBubble() : p.coverTitleBubble,
+    }));
+  }
+
+  function handleCoverSubtitleChange(text: string) {
+    updatePanel(panel.id, (p) => ({ ...p, coverSubtitle: text || null }));
+  }
+
+  function handleCoverFontSizeChange(fontSize: number) {
+    updatePanel(panel.id, (p) =>
+      p.coverTitleBubble ? { ...p, coverTitleBubble: { ...p.coverTitleBubble, font_size: fontSize } } : p
+    );
+  }
+
+  function handleCoverSizeChange(field: "width" | "height", value: number) {
+    updatePanel(panel.id, (p) =>
+      p.coverTitleBubble ? { ...p, coverTitleBubble: clampBubbleRect({ ...p.coverTitleBubble, [field]: value }) } : p
+    );
   }
 
   // STEP 7 §4, §18 — 드래그(마우스/터치 공통, Pointer Events)로 말풍선을
@@ -192,9 +242,12 @@ export default function EditorClient({
         startX = item.bubble.x;
         startY = item.bubble.y;
       }
-    } else if (panel.narrationBubble) {
+    } else if (target.kind === "narration" && panel.narrationBubble) {
       startX = panel.narrationBubble.x;
       startY = panel.narrationBubble.y;
+    } else if (target.kind === "cover" && panel.coverTitleBubble) {
+      startX = panel.coverTitleBubble.x;
+      startY = panel.coverTitleBubble.y;
     }
 
     dragState.current = { target, startClientX: e.clientX, startClientY: e.clientY, startX, startY };
@@ -203,9 +256,15 @@ export default function EditorClient({
   function handlePointerMove(e: React.PointerEvent) {
     const drag = dragState.current;
     if (!drag || !overlayRef.current) return;
+    const fg = foregroundRect ?? fallbackForeground(dims.width, dims.height);
     const rect = overlayRef.current.getBoundingClientRect();
-    const dx = (e.clientX - drag.startClientX) / rect.width;
-    const dy = (e.clientY - drag.startClientY) / rect.height;
+    // rect(오버레이)는 canvas 전체(1080x1350 등)에 대응하므로, 여기서 나오는 델타는
+    // "canvas 기준" 비율이다. bubble 좌표는 foreground(원본 이미지) 기준 0~1이므로,
+    // canvas 폭/높이와 foreground의 실제 렌더 폭/높이 비율만큼 보정해서 변환한다.
+    const dxCanvasFrac = (e.clientX - drag.startClientX) / rect.width;
+    const dyCanvasFrac = (e.clientY - drag.startClientY) / rect.height;
+    const dx = dxCanvasFrac * (dims.width / fg.drawWidth);
+    const dy = dyCanvasFrac * (dims.height / fg.drawHeight);
     const nextX = drag.startX + dx;
     const nextY = drag.startY + dy;
 
@@ -221,6 +280,10 @@ export default function EditorClient({
       updatePanel(panel.id, (p) =>
         p.narrationBubble ? { ...p, narrationBubble: clampBubbleRect({ ...p.narrationBubble, x: nextX, y: nextY }) } : p
       );
+    } else if (drag.target?.kind === "cover") {
+      updatePanel(panel.id, (p) =>
+        p.coverTitleBubble ? { ...p, coverTitleBubble: clampBubbleRect({ ...p.coverTitleBubble, x: nextX, y: nextY }) } : p
+      );
     }
   }
 
@@ -232,7 +295,10 @@ export default function EditorClient({
     setSaving(true);
     setMessage(null);
     try {
-      const result = await saveBubbleLayoutAction(panel.id, panel.dialogue, panel.narration, panel.narrationBubble);
+      const result =
+        panel.panelType === "cover"
+          ? await saveCoverLayoutAction(panel.id, panel.coverTitle, panel.coverSubtitle, panel.coverTitleBubble)
+          : await saveBubbleLayoutAction(panel.id, panel.dialogue, panel.narration, panel.narrationBubble);
       if (result.ok) {
         setDirty((prev) => ({ ...prev, [panel.id]: false }));
         setMessage("저장되었습니다.");
@@ -293,41 +359,86 @@ export default function EditorClient({
       >
         <canvas ref={canvasRef} style={{ width: "100%", height: "auto", display: "block", borderRadius: 12 }} />
 
-        {panel.dialogue.map(
-          (item) =>
-            item.bubble && (
-              <div
-                key={item.id}
-                onPointerDown={(e) => handlePointerDown(e, { kind: "dialogue", id: item.id })}
-                style={{
-                  position: "absolute",
-                  left: `${item.bubble.x * 100}%`,
-                  top: `${item.bubble.y * 100}%`,
-                  width: `${item.bubble.width * 100}%`,
-                  height: `${item.bubble.height * 100}%`,
-                  border: selection?.kind === "dialogue" && selection.id === item.id ? "2px solid #2563eb" : "2px dashed rgba(37,99,235,0.5)",
-                  cursor: "grab",
-                  boxSizing: "border-box",
-                }}
-              />
-            )
-        )}
+        {(() => {
+          const fg = foregroundRect ?? fallbackForeground(dims.width, dims.height);
+          // bubble은 foreground(원본 이미지) 기준 0~1이므로, overlay(=canvas 전체) 기준 %로
+          // 변환하려면 offset/drawWidth를 거쳐 canvas 전체 크기로 다시 나눠야 한다.
+          const toCanvasPct = (rect: { x: number; y: number; width: number; height: number }) => ({
+            left: ((fg.offsetX + rect.x * fg.drawWidth) / dims.width) * 100,
+            top: ((fg.offsetY + rect.y * fg.drawHeight) / dims.height) * 100,
+            width: ((rect.width * fg.drawWidth) / dims.width) * 100,
+            height: ((rect.height * fg.drawHeight) / dims.height) * 100,
+          });
 
-        {panel.narrationBubble && (
-          <div
-            onPointerDown={(e) => handlePointerDown(e, { kind: "narration" })}
-            style={{
-              position: "absolute",
-              left: `${panel.narrationBubble.x * 100}%`,
-              top: `${panel.narrationBubble.y * 100}%`,
-              width: `${panel.narrationBubble.width * 100}%`,
-              height: `${panel.narrationBubble.height * 100}%`,
-              border: selection?.kind === "narration" ? "2px solid #f59e0b" : "2px dashed rgba(245,158,11,0.5)",
-              cursor: "grab",
-              boxSizing: "border-box",
-            }}
-          />
-        )}
+          return (
+            <>
+              {panel.dialogue.map((item) => {
+                if (!item.bubble) return null;
+                const pct = toCanvasPct(item.bubble);
+                return (
+                  <div
+                    key={item.id}
+                    onPointerDown={(e) => handlePointerDown(e, { kind: "dialogue", id: item.id })}
+                    style={{
+                      position: "absolute",
+                      left: `${pct.left}%`,
+                      top: `${pct.top}%`,
+                      width: `${pct.width}%`,
+                      height: `${pct.height}%`,
+                      border:
+                        selection?.kind === "dialogue" && selection.id === item.id
+                          ? "2px solid #2563eb"
+                          : "2px dashed rgba(37,99,235,0.5)",
+                      cursor: "grab",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                );
+              })}
+
+              {panel.narrationBubble &&
+                (() => {
+                  const pct = toCanvasPct(panel.narrationBubble);
+                  return (
+                    <div
+                      onPointerDown={(e) => handlePointerDown(e, { kind: "narration" })}
+                      style={{
+                        position: "absolute",
+                        left: `${pct.left}%`,
+                        top: `${pct.top}%`,
+                        width: `${pct.width}%`,
+                        height: `${pct.height}%`,
+                        border: selection?.kind === "narration" ? "2px solid #f59e0b" : "2px dashed rgba(245,158,11,0.5)",
+                        cursor: "grab",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  );
+                })()}
+
+              {panel.panelType === "cover" &&
+                panel.coverTitleBubble &&
+                (() => {
+                  const pct = toCanvasPct(panel.coverTitleBubble);
+                  return (
+                    <div
+                      onPointerDown={(e) => handlePointerDown(e, { kind: "cover" })}
+                      style={{
+                        position: "absolute",
+                        left: `${pct.left}%`,
+                        top: `${pct.top}%`,
+                        width: `${pct.width}%`,
+                        height: `${pct.height}%`,
+                        border: selection?.kind === "cover" ? "2px solid #16a34a" : "2px dashed rgba(22,163,74,0.5)",
+                        cursor: "grab",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  );
+                })()}
+            </>
+          );
+        })()}
       </div>
 
       <div className="form-actions" style={{ marginTop: 12 }}>
@@ -347,6 +458,64 @@ export default function EditorClient({
         </button>
       </div>
 
+      {panel.panelType === "cover" ? (
+        <div className="card" onClick={() => panel.coverTitleBubble && setSelection({ kind: "cover" })}>
+          <h3 style={{ fontSize: 14 }}>표지 제목/부제</h3>
+          <div className="field">
+            <label>제목</label>
+            <textarea
+              className="textarea"
+              value={panel.coverTitle ?? ""}
+              onChange={(e) => handleCoverTitleChange(e.target.value)}
+              rows={1}
+            />
+          </div>
+          <div className="field">
+            <label>부제</label>
+            <textarea
+              className="textarea"
+              value={panel.coverSubtitle ?? ""}
+              onChange={(e) => handleCoverSubtitleChange(e.target.value)}
+              rows={1}
+            />
+          </div>
+          {panel.coverTitleBubble && (
+            <>
+              <div className="field">
+                <label>제목 글자 크기 ({panel.coverTitleBubble.font_size ?? 44}px, 부제는 자동으로 더 작게 표시됩니다)</label>
+                <input
+                  type="range"
+                  min={20}
+                  max={80}
+                  value={panel.coverTitleBubble.font_size ?? 44}
+                  onChange={(e) => handleCoverFontSizeChange(Number(e.target.value))}
+                />
+              </div>
+              <div className="field">
+                <label>너비 ({Math.round(panel.coverTitleBubble.width * 100)}%)</label>
+                <input
+                  type="range"
+                  min={30}
+                  max={100}
+                  value={Math.round(panel.coverTitleBubble.width * 100)}
+                  onChange={(e) => handleCoverSizeChange("width", Number(e.target.value) / 100)}
+                />
+              </div>
+              <div className="field">
+                <label>높이 ({Math.round(panel.coverTitleBubble.height * 100)}%)</label>
+                <input
+                  type="range"
+                  min={8}
+                  max={60}
+                  value={Math.round(panel.coverTitleBubble.height * 100)}
+                  onChange={(e) => handleCoverSizeChange("height", Number(e.target.value) / 100)}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <>
       <h3 style={{ fontSize: 14 }}>대사</h3>
       {panel.dialogue.map((item) => (
         <div
@@ -465,6 +634,8 @@ export default function EditorClient({
           </>
         )}
       </div>
+        </>
+      )}
 
       <div className="form-actions" style={{ marginTop: 16 }}>
         <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
