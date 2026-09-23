@@ -499,3 +499,137 @@ describe("updatePanelLocationAction — 021, 기존(확정된) panel에 Location
     expect(getLocationMock).not.toHaveBeenCalled();
   });
 });
+
+describe("editPanelImageAction — 기존 candidate 이미지 부분 수정", () => {
+  const SOURCE_IMAGE = { id: "img-source-1", panel_id: "panel-1", storage_path: "user-a/proj-1/raw/1/original.png" };
+
+  beforeEach(() => {
+    currentSupabase = createSupabaseMock({
+      panel: OWNED_PANEL,
+      approvedSheetStoragePath: "user-a/char-a/sheet.png",
+      targetPanelImage: SOURCE_IMAGE,
+    });
+  });
+
+  test("빈 문자열 editInstruction은 거부되고 아무것도 호출하지 않는다", async () => {
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    const result = await editPanelImageAction("img-source-1", "   ");
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/수정 요청을 입력/);
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(currentSupabase._calls["storage.toon-panels.download"]).toBeUndefined();
+  });
+
+  test("최대 길이를 초과하는 editInstruction은 거부된다", async () => {
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    const tooLong = "a".repeat(301);
+    const result = await editPanelImageAction("img-source-1", tooLong);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/최대/);
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  test("존재하지 않거나 다른 사용자의 source image는 거부된다(RLS로 null)", async () => {
+    currentSupabase = createSupabaseMock({ panel: OWNED_PANEL, targetPanelImage: null });
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    const result = await editPanelImageAction("someone-elses-image", "로고만 제거해주세요");
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/찾을 수 없거나 접근 권한이 없습니다/);
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  test("source image가 존재해도 그 panel의 project가 타인 소유면 거부된다", async () => {
+    getProjectMock.mockResolvedValue(null); // panel -> project 소유권 검증 실패
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    const result = await editPanelImageAction("img-source-1", "로고만 제거해주세요");
+    expect(result.ok).toBe(false);
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  test("source storage 파일을 찾을 수 없으면 실패하고 candidate를 저장하지 않는다", async () => {
+    currentSupabase = createSupabaseMock({
+      panel: OWNED_PANEL,
+      approvedSheetStoragePath: "user-a/char-a/sheet.png",
+      targetPanelImage: SOURCE_IMAGE,
+      downloadOk: false,
+    });
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    const result = await editPanelImageAction("img-source-1", "로고만 제거해주세요");
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/원본 이미지를 불러오지 못했습니다/);
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(currentSupabase._calls["toon_panel_images.insert"]).toBeUndefined();
+  });
+
+  test("정상 요청이면 정확한 source image를 다운로드하고 새 candidate를 저장한다", async () => {
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    const result = await editPanelImageAction("img-source-1", "노트북 뚜껑의 로고만 제거해주세요");
+    expect(result.ok).toBe(true);
+    expect(result.image?.status).toBe("candidate");
+
+    // 정확히 이 source image의 storage_path로만 다운로드했다(다른 경로 추측 없음).
+    expect(currentSupabase._calls["storage.toon-panels.download"]).toEqual([SOURCE_IMAGE.storage_path]);
+    expect(currentSupabase._calls["toon_panel_images.insert"]).toBeDefined();
+  });
+
+  test("Character Sheet와 source 이미지가 함께 reference로 전달된다(source + 캐릭터 수)", async () => {
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    await editPanelImageAction("img-source-1", "로고만 제거해주세요");
+    const referenceImages = generateMock.mock.calls[0][1] as unknown[];
+    // OWNED_PANEL.character_ids = ["char-a"] 1명 + source 1장 = 2장.
+    expect(referenceImages).toHaveLength(2);
+  });
+
+  test("최종 prompt에서 SOURCE PANEL IMAGE가 CHARACTER REFERENCE보다 먼저 언급된다(deterministic ordering)", async () => {
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    await editPanelImageAction("img-source-1", "로고만 제거해주세요");
+    const prompt = generateMock.mock.calls[0][0] as string;
+    const sourceIdx = prompt.indexOf("SOURCE PANEL IMAGE");
+    const charRefIdx = prompt.indexOf("CHARACTER REFERENCE A");
+    expect(sourceIdx).toBeGreaterThanOrEqual(0);
+    expect(charRefIdx).toBeGreaterThan(sourceIdx);
+  });
+
+  test("editInstruction이 최종 prompt와 prompt_snapshot에 그대로 남는다", async () => {
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    await editPanelImageAction("img-source-1", "노트북 뚜껑의 로고만 제거해주세요");
+    const prompt = generateMock.mock.calls[0][0] as string;
+    expect(prompt).toContain("노트북 뚜껑의 로고만 제거해주세요");
+
+    const insertCalls = currentSupabase._calls["toon_panel_images.insert"] as Record<string, unknown>[];
+    expect(insertCalls[0].prompt_snapshot).toContain("노트북 뚜껑의 로고만 제거해주세요");
+    expect(insertCalls[0].prompt_snapshot).toContain("EDIT TASK");
+  });
+
+  test("generation_type='regenerate'로 기록되어 최초 생성과 구분된다", async () => {
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    await editPanelImageAction("img-source-1", "로고만 제거해주세요");
+    const genInsertCalls = currentSupabase._calls["toon_generations.insert"] as Record<string, unknown>[];
+    expect(genInsertCalls[0].generation_type).toBe("regenerate");
+  });
+
+  test("기존 candidate는 rejected로 전환되고, 결과는 candidate 상태로만 저장되며 자동 approve되지 않는다", async () => {
+    const { editPanelImageAction } = await import("../../lib/projects/panelImages");
+
+    const result = await editPanelImageAction("img-source-1", "로고만 제거해주세요");
+    expect(result.ok).toBe(true);
+    expect(result.image?.status).toBe("candidate");
+
+    // 원본 row는 DELETE되지 않는다 — 이 mock에는 delete()가 아예 없어서
+    // 실수로 delete를 호출하면 TypeError로 테스트가 즉시 실패한다.
+    const updateCalls = currentSupabase._calls["toon_panel_images.update"] as Record<string, unknown>[];
+    expect(updateCalls).toContainEqual({ status: "rejected" });
+    // 이 액션은 raw_image_url을 갱신하는 approve 흐름을 절대 타지 않는다.
+    expect(currentSupabase._calls["toon_panels.update"]).toBeUndefined();
+  });
+});

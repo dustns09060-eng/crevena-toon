@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   approvePanelImageAction,
+  editPanelImageAction,
   generatePanelImageAction,
   updatePanelLocationAction,
   type PanelImageView,
@@ -59,6 +60,15 @@ export default function PanelImageGenerator({
   const [locationSavedPanel, setLocationSavedPanel] = useState<string | null>(null);
   const [locationErrorByPanel, setLocationErrorByPanel] = useState<Record<string, string>>({});
 
+  // 부분 수정 — 기존 candidate 이미지를 원본으로 텍스트 지시 기반 최소
+  // 수정을 요청한다. "부분 수정" 버튼을 누른 패널만 인라인 입력창을
+  // 펼치고, 그 패널의 현재 candidate.id를 sourcePanelImageId로 그대로
+  // 전달한다(다른 패널/승인된 이미지로 잘못 전달될 여지가 없다).
+  const [editOpenPanel, setEditOpenPanel] = useState<string | null>(null);
+  const [editInstructionByPanel, setEditInstructionByPanel] = useState<Record<string, string>>({});
+  const [editingPanel, setEditingPanel] = useState<string | null>(null);
+  const [editErrorByPanel, setEditErrorByPanel] = useState<Record<string, string>>({});
+
   async function handleSaveLocation(panelId: string) {
     setLocationSavingPanel(panelId);
     setLocationSavedPanel(null);
@@ -113,6 +123,45 @@ export default function PanelImageGenerator({
       }
     } finally {
       setRunningAll(false);
+    }
+  }
+
+  function openEdit(panelId: string) {
+    setEditOpenPanel(panelId);
+    setEditErrorByPanel((prev) => {
+      const next = { ...prev };
+      delete next[panelId];
+      return next;
+    });
+  }
+
+  function cancelEdit(panelId: string) {
+    setEditOpenPanel(null);
+    setEditErrorByPanel((prev) => {
+      const next = { ...prev };
+      delete next[panelId];
+      return next;
+    });
+  }
+
+  async function handleEditOne(panelId: string) {
+    const sourceImage = images[panelId]?.candidate;
+    if (!sourceImage) return;
+    setEditingPanel(panelId);
+    setEditErrorByPanel((prev) => {
+      const next = { ...prev };
+      delete next[panelId];
+      return next;
+    });
+
+    const result = await editPanelImageAction(sourceImage.id, editInstructionByPanel[panelId] ?? "");
+    setEditingPanel(null);
+    if (result.ok && result.image) {
+      setImages((prev) => ({ ...prev, [panelId]: { ...prev[panelId], candidate: result.image } }));
+      setEditOpenPanel(null);
+      setEditInstructionByPanel((prev) => ({ ...prev, [panelId]: "" }));
+    } else {
+      setEditErrorByPanel((prev) => ({ ...prev, [panelId]: result.message ?? "수정에 실패했습니다." }));
     }
   }
 
@@ -273,7 +322,53 @@ export default function PanelImageGenerator({
                   >
                     {status === "generating" ? "생성 중..." : "이 컷 다시 만들기"}
                   </button>
+                  {state.candidate && editOpenPanel !== panel.id && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => openEdit(panel.id)}
+                      disabled={status === "generating" || runningAll}
+                    >
+                      부분 수정
+                    </button>
+                  )}
                 </div>
+
+                {state.candidate && editOpenPanel === panel.id && (
+                  <div className="field" style={{ marginTop: 8 }}>
+                    <label>수정 요청</label>
+                    <textarea
+                      className="textarea"
+                      style={{ width: "100%", boxSizing: "border-box" }}
+                      value={editInstructionByPanel[panel.id] ?? ""}
+                      onChange={(e) =>
+                        setEditInstructionByPanel((prev) => ({ ...prev, [panel.id]: e.target.value }))
+                      }
+                      maxLength={300}
+                      placeholder="예: 노트북 뚜껑의 로고만 제거하고 나머지는 그대로 유지해주세요."
+                      disabled={editingPanel === panel.id}
+                    />
+                    {editErrorByPanel[panel.id] && <p className="error">{editErrorByPanel[panel.id]}</p>}
+                    <div className="form-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => handleEditOne(panel.id)}
+                        disabled={editingPanel === panel.id || !(editInstructionByPanel[panel.id] ?? "").trim()}
+                      >
+                        {editingPanel === panel.id ? "수정 중..." : "수정 이미지 만들기"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => cancelEdit(panel.id)}
+                        disabled={editingPanel === panel.id}
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

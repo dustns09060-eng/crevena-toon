@@ -13,6 +13,7 @@ import { DEFAULT_PANEL_ASPECT_RATIO } from "../../src/providers/panelImageConfig
 import { MAX_CHARACTERS_PER_PANEL } from "../../src/providers/projectPanelCountConfig";
 import { getLocation } from "../locations/service";
 import { getProjectLocation } from "./projectLocations";
+import { buildPanelImageEditPrompt } from "../../src/providers/panelImageEditPromptBuilder";
 import type { ToonCharacter, ToonPanel, ToonProject, ToonTimeOfDay } from "../../src/db/types";
 
 const REFERENCES_SHEET_BUCKET = "toon-character-sheets";
@@ -336,6 +337,219 @@ export async function generatePanelImageAction(panelId: string): Promise<Generat
     return { ok: false, message: e instanceof Error ? e.message : "이미지 생성 중 오류가 발생했습니다." };
   } finally {
     inFlightPanelGeneration.delete(panelId);
+  }
+}
+
+const MAX_EDIT_INSTRUCTION_LENGTH = 300;
+
+/**
+ * "부분 수정" — 기존 candidate/rejected 이미지 하나(sourcePanelImageId로
+ * 정확히 지정)를 원본 reference로 그대로 Gemini에 다시 보내고, 텍스트
+ * 수정 지시(editInstruction)만 반영한 새 이미지를 만든다.
+ *
+ * 안전 원칙(사용자 지시):
+ * - panelId를 별도로 받지 않는다 — sourcePanelImageId 하나로 대상을
+ *   특정하고, 그 이미지가 속한 panel/project를 서버가 직접 역산해서
+ *   소유권을 검증한다("현재 candidate 아무거나"를 추측하지 않는다).
+ * - toon_panel_images는 panel->project 2단계 RLS로 스코프되므로,
+ *   남의 이미지거나 존재하지 않는 id면 이 시점에서 이미 null이 되어
+ *   차단된다 — status(candidate/rejected)는 검사 조건에 넣지 않으므로
+ *   과거 rejected 이미지도 그대로 원본으로 쓸 수 있다.
+ * - 결과는 항상 새 toon_panel_images row(status='candidate')로만
+ *   저장한다 — 원본 row/파일은 절대 수정·삭제하지 않는다.
+ * - DB migration 없음 — 기존 generation_version/prompt_snapshot 구조를
+ *   그대로 재사용한다. generation_type은 이미 001에 존재하지만 지금까지
+ *   아무 코드도 쓰지 않던 'regenerate' 값을 재사용해 "처음 생성"과
+ *   구분한다.
+ */
+export async function editPanelImageAction(
+  sourcePanelImageId: string,
+  editInstructionRaw: string
+): Promise<GeneratePanelImageState> {
+  const editInstruction = editInstructionRaw.trim();
+  if (editInstruction.length === 0) {
+    return { ok: false, message: "수정 요청을 입력해주세요." };
+  }
+  if (editInstruction.length > MAX_EDIT_INSTRUCTION_LENGTH) {
+    return { ok: false, message: `수정 요청은 최대 ${MAX_EDIT_INSTRUCTION_LENGTH}자까지 입력할 수 있어요.` };
+  }
+
+  const lookupClient = await createClient();
+  const {
+    data: { user: lookupUser },
+  } = await lookupClient.auth.getUser();
+  if (!lookupUser) return { ok: false, message: "로그인이 필요합니다." };
+
+  const { data: sourceImage, error: sourceErr } = await lookupClient
+    .from("toon_panel_images")
+    .select("id, panel_id, storage_path")
+    .eq("id", sourcePanelImageId)
+    .maybeSingle();
+  if (sourceErr || !sourceImage) {
+    return { ok: false, message: "수정할 원본 이미지를 찾을 수 없거나 접근 권한이 없습니다." };
+  }
+
+  const owned = await requireOwnedPanel(sourceImage.panel_id);
+  if ("error" in owned) return { ok: false, message: owned.error };
+  const { supabase, user, panel, project } = owned;
+
+  if (inFlightPanelGeneration.has(panel.id)) {
+    return { ok: false, message: "이미 이 컷의 이미지를 생성하고 있습니다. 잠시만 기다려주세요." };
+  }
+  inFlightPanelGeneration.add(panel.id);
+
+  const startedAt = Date.now();
+  let generationId: string | null = null;
+
+  try {
+    const { data: sourceFile, error: sourceDownloadErr } = await supabase.storage
+      .from(PANELS_BUCKET)
+      .download(sourceImage.storage_path);
+    if (sourceDownloadErr || !sourceFile) throw new Error("수정할 원본 이미지를 불러오지 못했습니다.");
+    const sourceImageBytes = { bytes: new Uint8Array(await sourceFile.arrayBuffer()), mimeType: sourceFile.type || "image/png" };
+
+    const fullCharacters: ToonCharacter[] = [];
+    for (const id of panel.character_ids) {
+      const c = await getCharacter(supabase, id);
+      if (!c) throw new Error("등장 캐릭터 정보를 불러올 수 없습니다.");
+      fullCharacters.push(c);
+    }
+
+    // reference 배열 순서 = [원본(SOURCE), 캐릭터A, 캐릭터B, ...] —
+    // buildPanelImageEditPrompt의 REFERENCE IMAGE ROLES 문구가 이 순서와
+    // 정확히 1:1로 대응해야 하므로, 여기서 배열을 만드는 순서를 절대
+    // 바꾸면 안 된다.
+    const referenceImages = [sourceImageBytes];
+    for (const c of fullCharacters) {
+      const { data: sheet } = await supabase
+        .from("toon_character_sheets")
+        .select("storage_path")
+        .eq("character_id", c.id)
+        .eq("status", "approved")
+        .maybeSingle();
+      if (!sheet) throw new Error(`'${c.display_name}'의 승인된 Character Sheet를 찾을 수 없습니다.`);
+      const { data: file, error: downloadErr } = await supabase.storage
+        .from(REFERENCES_SHEET_BUCKET)
+        .download(sheet.storage_path);
+      if (downloadErr || !file) throw new Error("Character Sheet 이미지를 불러오지 못했습니다.");
+      referenceImages.push({ bytes: new Uint8Array(await file.arrayBuffer()), mimeType: file.type || "image/png" });
+    }
+
+    const prompt = buildPanelImageEditPrompt({
+      editInstruction,
+      characters: fullCharacters.map((c) => ({ display_name: c.display_name })),
+    });
+
+    const provider = getCharacterSheetProvider();
+
+    const { data: genRow, error: genInsertErr } = await supabase
+      .from("toon_generations")
+      .insert({
+        user_id: user.id,
+        project_id: project.id,
+        panel_id: panel.id,
+        generation_type: "regenerate",
+        provider: provider.id,
+        model: "pending",
+        status: "pending",
+        image_count: 0,
+      })
+      .select("id")
+      .single();
+    if (genInsertErr) throw new Error("생성 로그를 기록하지 못했습니다.");
+    generationId = genRow.id;
+
+    const result = await provider.generate(prompt, referenceImages);
+
+    const storagePath = `${user.id}/${project.id}/raw/${panel.panel_number}/${generationId}.png`;
+    const { error: uploadErr } = await supabase.storage
+      .from(PANELS_BUCKET)
+      .upload(storagePath, result.imageBytes, { contentType: "image/png", upsert: false });
+    if (uploadErr) throw new Error("이미지 저장에 실패했습니다.");
+
+    const { count: existingCount } = await supabase
+      .from("toon_panel_images")
+      .select("id", { count: "exact", head: true })
+      .eq("panel_id", panel.id);
+    const generationVersion = (existingCount ?? 0) + 1;
+
+    const { data: imageRow, error: imageInsertErr } = await supabase
+      .from("toon_panel_images")
+      .insert({
+        panel_id: panel.id,
+        generation_id: generationId,
+        provider: result.provider,
+        model: result.model,
+        status: "candidate",
+        storage_path: storagePath,
+        generation_version: generationVersion,
+        prompt_snapshot: prompt,
+      })
+      .select()
+      .single();
+    if (imageInsertErr) throw new Error("이미지 기록 저장에 실패했습니다.");
+
+    // 새 candidate가 성공적으로 생기면 같은 panel의 기존 candidate는
+    // rejected로 전환한다(기존 generatePanelImageAction과 동일한 정책) —
+    // approved는 이 조건에 걸리지 않으므로 절대 건드리지 않고, 원본으로
+    // 쓴 sourceImage가 이미 rejected/approved였다면 이 update는 그
+    // row에 영향을 주지 않는다(오직 status='candidate'인 행만 대상).
+    const { error: staleRejectErr } = await supabase
+      .from("toon_panel_images")
+      .update({ status: "rejected" })
+      .eq("panel_id", panel.id)
+      .eq("status", "candidate")
+      .neq("id", imageRow.id);
+    if (staleRejectErr) {
+      console.error("[panel-image-edit] 기존 candidate 정리 실패:", staleRejectErr.message);
+    }
+
+    const { error: markSuccessErr } = await createAdminClient()
+      .from("toon_generations")
+      .update({ status: "success", model: result.model, image_count: 1 })
+      .eq("id", generationId);
+    if (markSuccessErr) {
+      console.error("[panel-image-edit] generation 상태 갱신 실패:", markSuccessErr.message);
+    }
+
+    logPanelGeneration({ panelId: panel.id, provider: result.provider, status: "success", durationMs: Date.now() - startedAt });
+
+    const { data: signed } = await supabase.storage.from(PANELS_BUCKET).createSignedUrl(storagePath, 3600);
+
+    revalidatePath(`/toon/projects/${project.id}`);
+
+    return {
+      ok: true,
+      image: {
+        id: imageRow.id,
+        status: imageRow.status,
+        signedUrl: signed?.signedUrl ?? null,
+        generationVersion: imageRow.generation_version,
+      },
+    };
+  } catch (e) {
+    if (generationId) {
+      const { error: markFailedErr } = await createAdminClient()
+        .from("toon_generations")
+        .update({ status: "failed", error_message: e instanceof Error ? e.message.slice(0, 300) : "unknown" })
+        .eq("id", generationId);
+      if (markFailedErr) {
+        console.error("[panel-image-edit] generation 실패 상태 기록 실패:", markFailedErr.message);
+      }
+    }
+    logPanelGeneration({
+      panelId: panel.id,
+      provider: "unknown",
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      errorType: e instanceof Error ? e.constructor.name : "Unknown",
+    });
+    // provider 원문 오류/storage 경로 등 내부 정보를 그대로 노출하지
+    // 않고, 이미 한국어로 다듬어진 Error.message만 그대로 전달한다
+    // (이 함수 안의 모든 throw가 이미 사용자용 문구다).
+    return { ok: false, message: e instanceof Error ? e.message : "이미지 수정 중 오류가 발생했습니다." };
+  } finally {
+    inFlightPanelGeneration.delete(panel.id);
   }
 }
 
