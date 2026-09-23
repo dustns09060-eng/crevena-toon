@@ -11,7 +11,8 @@ import { buildPanelImagePrompt, COVER_COMPOSITION_NOTE } from "../../src/provide
 import { getToonStyle } from "../../src/providers/characterSheetStyle";
 import { DEFAULT_PANEL_ASPECT_RATIO } from "../../src/providers/panelImageConfig";
 import { MAX_CHARACTERS_PER_PANEL } from "../../src/providers/projectPanelCountConfig";
-import type { ToonCharacter, ToonPanel, ToonProject } from "../../src/db/types";
+import { getLocation } from "../locations/service";
+import type { ToonCharacter, ToonPanel, ToonProject, ToonTimeOfDay } from "../../src/db/types";
 
 const REFERENCES_SHEET_BUCKET = "toon-character-sheets";
 const PANELS_BUCKET = "toon-panels";
@@ -177,6 +178,28 @@ export async function generatePanelImageAction(panelId: string): Promise<Generat
       promptCharacters.push({ display_name: c.display_name, characterBible: toBibleForPrompt(c) });
     }
 
+    // 021 — panel.location_id가 있으면 그 Location Bible을 조회해 프롬프트에
+    // 전달한다. 없으면(레거시/장소 미설정) location을 넘기지 않는다 —
+    // buildPanelImagePrompt는 이 경우 LOCATION 블록을 아예 생략한다.
+    let locationContext = null;
+    if (panel.location_id) {
+      const location = await getLocation(supabase, panel.location_id);
+      if (location) {
+        locationContext = {
+          display_name: location.display_name,
+          visual_prompt: location.visual_prompt,
+          wall_and_floor: location.wall_and_floor,
+          fixed_furniture: location.fixed_furniture,
+          window_style: location.window_style,
+          recurring_props: location.recurring_props,
+          distinctive_features: location.distinctive_features,
+        };
+      }
+      // location이 삭제되어 조회되지 않는 경우(on delete set null이 아직
+      // 반영 안 됐거나 타이밍 이슈)는 조용히 무시하고 location 없이
+      // 진행한다 — 생성 자체를 막을 이유는 없다(장소는 부가 정보).
+    }
+
     const style = getToonStyle();
     const prompt = buildPanelImagePrompt({
       sceneDescription: panel.scene ?? "",
@@ -186,6 +209,8 @@ export async function generatePanelImageAction(panelId: string): Promise<Generat
       style: style.prompt,
       aspectRatio: DEFAULT_PANEL_ASPECT_RATIO,
       coverNote: panel.panel_type === "cover" ? COVER_COMPOSITION_NOTE : undefined,
+      location: locationContext,
+      timeOfDay: panel.time_of_day,
     });
 
     const provider = getCharacterSheetProvider();
@@ -335,6 +360,50 @@ export async function approvePanelImageAction(
   if (panelUpdateErr) return { ok: false, message: "컷 정보 갱신에 실패했습니다." };
 
   revalidatePath(`/toon/projects/${owned.project.id}`);
+  return { ok: true };
+}
+
+export interface UpdatePanelLocationInput {
+  location_id: string | null;
+  time_of_day: ToonTimeOfDay | null;
+}
+
+const VALID_TIME_OF_DAY_VALUES: ToonTimeOfDay[] = ["MORNING", "DAY", "EVENING", "NIGHT", "LATE_NIGHT"];
+
+/**
+ * 021 — 이미 확정(confirmed)된 프로젝트를 포함해, 기존 panel의
+ * Location/Time of Day를 Storyboard 전체 재생성 없이 직접 지정/수정한다.
+ * AI를 호출하지 않고, Storyboard/character_ids/이미지 등 다른 어떤
+ * 것도 건드리지 않는다 — 오직 toon_panels.location_id/time_of_day만
+ * 갱신한다. 그 뒤 이 panel의 이미지를 새로 생성하면(기존 candidate는
+ * rejected로 이동, 삭제되지 않음) 바뀐 Location Bible/시간대가 반영된다.
+ */
+export async function updatePanelLocationAction(
+  panelId: string,
+  input: UpdatePanelLocationInput
+): Promise<{ ok: boolean; message?: string }> {
+  const owned = await requireOwnedPanel(panelId);
+  if ("error" in owned) return { ok: false, message: owned.error };
+  const { supabase, panel } = owned;
+
+  if (input.time_of_day && !VALID_TIME_OF_DAY_VALUES.includes(input.time_of_day)) {
+    return { ok: false, message: "시간대 값이 올바르지 않습니다." };
+  }
+
+  if (input.location_id) {
+    // getLocation은 RLS로 스코프되므로 남의 location_id면 null이 되어
+    // 별도 소유권 비교 없이 타인 장소 지정 시도가 차단된다.
+    const location = await getLocation(supabase, input.location_id);
+    if (!location) return { ok: false, message: "장소를 찾을 수 없거나 접근 권한이 없습니다." };
+  }
+
+  const { error } = await supabase
+    .from("toon_panels")
+    .update({ location_id: input.location_id, time_of_day: input.time_of_day })
+    .eq("id", panelId);
+  if (error) return { ok: false, message: "장소/시간대 저장에 실패했습니다." };
+
+  revalidatePath(`/toon/projects/${panel.project_id}`);
   return { ok: true };
 }
 

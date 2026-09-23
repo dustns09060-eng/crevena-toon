@@ -21,11 +21,34 @@ export interface GenerateIdeasInput {
   characters: StoryboardCharacterContext[];
 }
 
+/** 021 — Location Bible 컨텍스트. 사용자가 반드시 채우는 값은 display_name/visual_prompt뿐이라 나머지는 optional. */
+export interface StoryboardLocationContext {
+  display_name: string;
+  visual_prompt: string;
+  wall_and_floor: string | null;
+  fixed_furniture: string | null;
+  window_style: string | null;
+  recurring_props: string | null;
+  distinctive_features: string | null;
+}
+
+/**
+ * characterIdentifier와 동일한 이유로 LOCATION_A/B/C... 식별자를 부여한
+ * 장소. locations가 비어있는(이 시리즈에 등록된 장소가 없는) 경우,
+ * 프롬프트에서 Location 섹션 자체를 생략한다 — AI에게 location 필드를
+ * 채우라고 요구하지 않는다.
+ */
+export interface StoryboardIdentifiedLocation extends StoryboardLocationContext {
+  identifier: string;
+}
+
 export interface GenerateStoryboardInput {
   topic: string;
   /** 표지 포함 TOTAL 컷 수(6/8/10 고정이 아니라 2~20 범위 — projectPanelCountConfig.ts 참조). */
   panelCount: number;
   characters: StoryboardIdentifiedCharacter[];
+  /** 021 — 이 프로젝트가 속한 시리즈의 Location Set. 없으면 빈 배열. */
+  locations: StoryboardIdentifiedLocation[];
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { StoryboardRaw } from "./storyboardSchema";
+import type { StoryboardRaw, StoryboardTimeOfDay } from "./storyboardSchema";
 
 export interface StoryboardDraftDialogueLine {
   id: string;
@@ -20,6 +20,9 @@ export interface StoryboardDraftPanel {
   /** panel_type='cover'일 때만 값이 있다. */
   cover_title: string | null;
   cover_subtitle: string | null;
+  /** 021 — AI가 판단한(또는 사용자가 이후 직접 수정한) 장소/시간대. 둘 다 없을 수 있다. */
+  location_id: string | null;
+  time_of_day: StoryboardTimeOfDay | null;
 }
 
 export interface StoryboardDraft {
@@ -43,11 +46,23 @@ export interface StoryboardDraft {
  */
 export function mapStoryboardRawToDraft(
   raw: StoryboardRaw,
-  identifierToId: Map<string, string>
+  identifierToId: Map<string, string>,
+  locationIdentifierToId: Map<string, string> = new Map()
 ): StoryboardDraft {
   function resolveId(identifier: string): string {
     const id = identifierToId.get(identifier);
     if (!id) throw new Error(`캐릭터 식별자를 ID로 변환할 수 없습니다: ${identifier}`);
+    return id;
+  }
+
+  // location은 optional이라 raw에 값이 없으면(undefined) null을 반환한다
+  // (레거시/장소 미설정 프로젝트에서는 항상 이 경로를 탄다). 값이 있는데
+  // 매핑에 없는 경우는 validateStoryboardAgainstProject가 이미 걸러냈어야
+  // 하지만, 방어적으로 여기서도 에러를 던진다(조용히 null로 흘리지 않음).
+  function resolveLocationId(identifier: string | undefined): string | null {
+    if (identifier === undefined) return null;
+    const id = locationIdentifierToId.get(identifier);
+    if (!id) throw new Error(`장소 식별자를 ID로 변환할 수 없습니다: ${identifier}`);
     return id;
   }
 
@@ -65,6 +80,8 @@ export function mapStoryboardRawToDraft(
     // 이 선택적 필드를 아예 생략한 경우) — DB/Draft 타입은 `string | null`
     // 이므로 undefined를 null로 정규화한다.
     cover_subtitle: raw.cover.cover_subtitle ?? null,
+    location_id: resolveLocationId(raw.cover.location),
+    time_of_day: raw.cover.time_of_day ?? null,
   };
 
   const scenePanels: StoryboardDraftPanel[] = raw.panels.map((panel) => ({
@@ -83,6 +100,8 @@ export function mapStoryboardRawToDraft(
     image_prompt: panel.image_prompt,
     cover_title: null,
     cover_subtitle: null,
+    location_id: resolveLocationId(panel.location),
+    time_of_day: panel.time_of_day ?? null,
   }));
 
   return {

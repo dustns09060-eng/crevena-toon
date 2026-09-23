@@ -218,6 +218,8 @@ describe("saveStoryboardAction", () => {
         image_prompt: "prompt",
         cover_title: null,
         cover_subtitle: null,
+        location_id: null,
+        time_of_day: null,
       },
     ],
   };

@@ -3,11 +3,13 @@ import type {
   GenerateIdeasInput,
   GenerateStoryboardInput,
   StoryboardIdentifiedCharacter,
+  StoryboardIdentifiedLocation,
   StoryboardProvider,
 } from "./StoryboardProvider";
 import {
   StoryIdeasResponseSchema,
   StoryboardRawSchema,
+  TIME_OF_DAY_VALUES,
   describeStoryboardParseIssues,
   type StoryIdea,
   type StoryboardRaw,
@@ -108,8 +110,12 @@ const STORYBOARD_RESPONSE_SCHEMA = {
         scene_description: { type: "STRING" },
         characters: { type: "ARRAY", items: { type: "STRING" } },
         image_prompt: { type: "STRING" },
+        // location은 required에 넣지 않는다 — 이 시리즈에 등록된
+        // Location Set이 없으면 AI가 이 필드를 아예 채우지 않아야 한다.
+        location: { type: "STRING" },
+        time_of_day: { type: "STRING", enum: [...TIME_OF_DAY_VALUES] },
       },
-      required: ["cover_title", "scene_description", "characters", "image_prompt"],
+      required: ["cover_title", "scene_description", "characters", "image_prompt", "time_of_day"],
     },
     panels: {
       type: "ARRAY",
@@ -131,6 +137,8 @@ const STORYBOARD_RESPONSE_SCHEMA = {
           },
           narration: { type: "STRING", nullable: true },
           image_prompt: { type: "STRING" },
+          location: { type: "STRING" },
+          time_of_day: { type: "STRING", enum: [...TIME_OF_DAY_VALUES] },
         },
         required: [
           "panel_number",
@@ -140,6 +148,7 @@ const STORYBOARD_RESPONSE_SCHEMA = {
           "actions",
           "dialogue",
           "image_prompt",
+          "time_of_day",
         ],
       },
     },
@@ -196,7 +205,22 @@ const STORYBOARD_SYSTEM_INSTRUCTION = `당신은 인스타그램 육아 일상�
   배경"만 담당합니다. 캐릭터의 고정 외형(헤어스타일, 머리색, 옷 등 —
   Character Bible이 담당)을 다시 서술하지 마세요. 그리고 image_prompt에
   한국어 대사나 텍스트, 제목 글자를 그림에 그리라는 지시를 절대 넣지
-  마세요 — 이미지에는 어떤 글자도 그리지 않을 것이기 때문입니다.`;
+  마세요 — 이미지에는 어떤 글자도 그리지 않을 것이기 때문입니다.
+- image_prompt는 반드시 같은 컷의 scene_description(또는 cover의
+  scene_description)이 말하는 장소, 인물의 행동, 등장하는 주요 소품,
+  시간대(예: 밤/육퇴 후라면 밤)를 그대로 시각적으로 구현해야 합니다.
+  image_prompt가 scene_description과 다른 장소/행동/소품/시간대를
+  묘사해서 서로 모순되면 안 됩니다 — 카메라 구도나 표현 방식만 다르게
+  가져가고, 내용 자체는 항상 scene_description을 따르세요.
+- time_of_day는 모든 컷(표지 포함)에 반드시 MORNING/DAY/EVENING/NIGHT/
+  LATE_NIGHT 중 하나로 채우세요. scene_description의 맥락(예: "아이들이
+  잠든 뒤", "육퇴", "늦은 밤")으로 알 수 있는 시간대를 정확히 판단하세요.
+- location 필드는 "등장 장소" 목록이 아래에 주어졌을 때만 사용합니다.
+  목록이 주어졌다면 cover와 모든 panel의 location 필드에 반드시 그
+  목록에 있는 LOCATION_A, LOCATION_B 같은 식별자만 정확히 그대로
+  사용하세요(characters와 동일한 규칙 — 목록에 없는 새 장소를 만들어내면
+  안 됩니다. 필요하면 이미 있는 장소로 대체하세요). "등장 장소" 목록
+  자체가 주어지지 않았다면 location 필드는 아예 채우지 마세요.`;
 
 function buildCharacterContextText(characters: { display_name: string; role: string; personality: string | null; speaking_style: string | null }[]): string {
   return characters
@@ -222,6 +246,25 @@ function buildIdentifiedCharacterContextText(characters: StoryboardIdentifiedCha
       const parts = [`identifier: ${c.identifier}`, `이름: ${c.display_name}`, `역할: ${c.role}`];
       if (c.personality) parts.push(`성격: ${c.personality}`);
       if (c.speaking_style) parts.push(`말투: ${c.speaking_style}`);
+      return "- " + parts.join(", ");
+    })
+    .join("\n");
+}
+
+/**
+ * 021 — 시리즈에 등록된 Location Bible을 LOCATION_A/B/C... identifier와
+ * 함께 보여준다(캐릭터와 동일한 패턴). display_name/visual_prompt만
+ * 필수이므로 나머지("고급 설정") 필드는 값이 있을 때만 붙인다.
+ */
+function buildIdentifiedLocationContextText(locations: StoryboardIdentifiedLocation[]): string {
+  return locations
+    .map((l) => {
+      const parts = [`identifier: ${l.identifier}`, `이름: ${l.display_name}`, `설명: ${l.visual_prompt}`];
+      if (l.wall_and_floor) parts.push(`벽/바닥: ${l.wall_and_floor}`);
+      if (l.fixed_furniture) parts.push(`고정 가구: ${l.fixed_furniture}`);
+      if (l.window_style) parts.push(`창문: ${l.window_style}`);
+      if (l.recurring_props) parts.push(`소품: ${l.recurring_props}`);
+      if (l.distinctive_features) parts.push(`특징: ${l.distinctive_features}`);
       return "- " + parts.join(", ");
     })
     .join("\n");
@@ -275,7 +318,11 @@ panels 배열은 반드시 정확히 ${sceneCount}개여야 합니다.
 
 등장 캐릭터 (characters/dialogue.character 필드에는 반드시 이 identifier만 사용하세요):
 ${buildIdentifiedCharacterContextText(input.characters)}
-
+${
+  input.locations.length > 0
+    ? `\n등장 장소 (location 필드에는 반드시 이 identifier만 사용하세요 — 목록에 없는 장소를 새로 만들지 마세요):\n${buildIdentifiedLocationContextText(input.locations)}\n`
+    : ""
+}
 소재:
 ${input.topic}
 

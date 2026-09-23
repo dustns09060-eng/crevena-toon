@@ -5,23 +5,35 @@ import Link from "next/link";
 import {
   approvePanelImageAction,
   generatePanelImageAction,
+  updatePanelLocationAction,
   type PanelImageView,
 } from "../../../../lib/projects/panelImages";
-import type { ToonPanel } from "../../../../src/db/types";
+import type { ToonPanel, ToonTimeOfDay } from "../../../../src/db/types";
 
 interface PanelImagesState {
   approved?: PanelImageView;
   candidate?: PanelImageView;
 }
 
+const TIME_OF_DAY_OPTIONS: { value: ToonTimeOfDay; label: string }[] = [
+  { value: "MORNING", label: "아침" },
+  { value: "DAY", label: "낮" },
+  { value: "EVENING", label: "저녁" },
+  { value: "NIGHT", label: "밤" },
+  { value: "LATE_NIGHT", label: "늦은 밤" },
+];
+
 export default function PanelImageGenerator({
   panels,
   initialImages,
   initialReadinessErrors,
+  allLocations,
 }: {
   panels: ToonPanel[];
   initialImages: Record<string, PanelImagesState>;
   initialReadinessErrors: string[];
+  /** 021 — 이 시리즈의 Location Set. 없으면 빈 배열(Location 선택 UI 자체를 숨긴다). */
+  allLocations: { id: string; display_name: string }[];
 }) {
   const [images, setImages] = useState<Record<string, PanelImagesState>>(initialImages);
   const [statusByPanel, setStatusByPanel] = useState<Record<string, "idle" | "generating" | "failed">>({});
@@ -29,6 +41,39 @@ export default function PanelImageGenerator({
   const [runningAll, setRunningAll] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [readinessErrors] = useState(initialReadinessErrors);
+
+  // 021 — Storyboard 전체 재생성 없이 기존(확정된) 컷의 Location/Time of
+  // Day만 직접 지정/수정한다. 저장 후 "이 컷 다시 만들기"로 새
+  // candidate를 생성하면 바뀐 값이 반영된다.
+  const [locationByPanel, setLocationByPanel] = useState<Record<string, string | null>>(() =>
+    Object.fromEntries(panels.map((p) => [p.id, p.location_id]))
+  );
+  const [timeByPanel, setTimeByPanel] = useState<Record<string, ToonTimeOfDay | null>>(() =>
+    Object.fromEntries(panels.map((p) => [p.id, p.time_of_day]))
+  );
+  const [locationSavingPanel, setLocationSavingPanel] = useState<string | null>(null);
+  const [locationSavedPanel, setLocationSavedPanel] = useState<string | null>(null);
+  const [locationErrorByPanel, setLocationErrorByPanel] = useState<Record<string, string>>({});
+
+  async function handleSaveLocation(panelId: string) {
+    setLocationSavingPanel(panelId);
+    setLocationSavedPanel(null);
+    setLocationErrorByPanel((prev) => {
+      const next = { ...prev };
+      delete next[panelId];
+      return next;
+    });
+    const result = await updatePanelLocationAction(panelId, {
+      location_id: locationByPanel[panelId] ?? null,
+      time_of_day: timeByPanel[panelId] ?? null,
+    });
+    setLocationSavingPanel(null);
+    if (result.ok) {
+      setLocationSavedPanel(panelId);
+    } else {
+      setLocationErrorByPanel((prev) => ({ ...prev, [panelId]: result.message ?? "저장에 실패했습니다." }));
+    }
+  }
 
   const approvedCount = panels.filter((p) => images[p.id]?.approved).length;
   const allApproved = panels.length > 0 && approvedCount === panels.length;
@@ -125,6 +170,57 @@ export default function PanelImageGenerator({
                 <p className="hint" style={{ marginTop: 0 }}>
                   {panel.scene}
                 </p>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  {allLocations.length > 0 && (
+                    <select
+                      className="input"
+                      style={{ maxWidth: 160 }}
+                      value={locationByPanel[panel.id] ?? ""}
+                      onChange={(e) =>
+                        setLocationByPanel((prev) => ({ ...prev, [panel.id]: e.target.value || null }))
+                      }
+                    >
+                      <option value="">장소 선택 안 함</option>
+                      {allLocations.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.display_name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <select
+                    className="input"
+                    style={{ maxWidth: 120 }}
+                    value={timeByPanel[panel.id] ?? ""}
+                    onChange={(e) =>
+                      setTimeByPanel((prev) => ({
+                        ...prev,
+                        [panel.id]: (e.target.value || null) as ToonTimeOfDay | null,
+                      }))
+                    }
+                  >
+                    <option value="">시간대 선택 안 함</option>
+                    {TIME_OF_DAY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => handleSaveLocation(panel.id)}
+                    disabled={locationSavingPanel === panel.id}
+                  >
+                    {locationSavingPanel === panel.id ? "저장 중..." : "장소/시간대 저장"}
+                  </button>
+                </div>
+                {locationSavedPanel === panel.id && (
+                  <p className="hint">저장했어요. 이 컷을 다시 만들면 반영됩니다.</p>
+                )}
+                {locationErrorByPanel[panel.id] && <p className="error">{locationErrorByPanel[panel.id]}</p>}
+
                 <p className="hint">
                   상태:{" "}
                   {status === "generating"

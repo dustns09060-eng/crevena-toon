@@ -30,6 +30,27 @@ const CharacterIdentifierSchema = z
   .string()
   .trim()
   .regex(CHARACTER_IDENTIFIER_REGEX, "캐릭터는 반드시 CHARACTER_A, CHARACTER_B 같은 식별자여야 합니다.");
+
+/**
+ * 021 — 장소(Location) 식별자. characterIdentifier와 완전히 동일한
+ * 이유(유니코드 정규화 문제 방지)로 display_name 대신 LOCATION_A/B/C...
+ * 식별자만 구조화 필드에 쓰게 한다. 이 필드는 항상 optional이다 —
+ * 시리즈에 등록된 Location Set이 없으면 AI는 이 필드를 아예 채우지
+ * 않아야 하고(레거시 호환), 그 경우는 정상이다. 반대로 "Location Set이
+ * 없는데 AI가 임의로 LOCATION_A를 반환한 경우"는 이 zod 스키마
+ * 단계에서는 통과하지만 validateStoryboardAgainstProject의 교차
+ * 검증에서 명시적으로 거부한다(조용히 null로 매핑하지 않는다).
+ */
+const LOCATION_IDENTIFIER_REGEX = /^LOCATION_[A-Z]$/;
+const LocationIdentifierSchema = z
+  .string()
+  .trim()
+  .regex(LOCATION_IDENTIFIER_REGEX, "장소는 반드시 LOCATION_A, LOCATION_B 같은 식별자여야 합니다.");
+
+/** 021 — 컷의 시간대. Location Set 유무와 무관하게 항상 선택적으로 허용한다. */
+export const TIME_OF_DAY_VALUES = ["MORNING", "DAY", "EVENING", "NIGHT", "LATE_NIGHT"] as const;
+const TimeOfDaySchema = z.enum(TIME_OF_DAY_VALUES);
+export type StoryboardTimeOfDay = (typeof TIME_OF_DAY_VALUES)[number];
 export const StoryIdeaSchema = z.object({
   title: z.string().trim().min(1).max(60),
   description: z.string().trim().min(1).max(300),
@@ -59,6 +80,12 @@ export const StoryboardPanelRawSchema = z.object({
   // 실패한 원인이었다. .optional()을 추가해 두 경우 모두 허용한다.
   narration: z.string().trim().max(200).nullable().optional(),
   image_prompt: z.string().trim().min(1).max(500),
+  // 021 — 둘 다 optional. location은 "이 시리즈에 등록된 Location Set이
+  // 있을 때만 뜻이 있는" 필드라 무조건 optional이어야 하고,
+  // time_of_day는 narration과 동일한 이유(Gemini가 optional 필드의
+  // 키 자체를 생략할 수 있음)로 optional + nullable 둘 다 허용한다.
+  location: LocationIdentifierSchema.optional(),
+  time_of_day: TimeOfDaySchema.nullable().optional(),
 });
 
 /**
@@ -74,6 +101,8 @@ export const StoryboardCoverRawSchema = z.object({
   scene_description: z.string().trim().min(1).max(300),
   characters: z.array(CharacterIdentifierSchema).min(1).max(MAX_CHARACTERS_PER_PANEL),
   image_prompt: z.string().trim().min(1).max(500),
+  location: LocationIdentifierSchema.optional(),
+  time_of_day: TimeOfDaySchema.nullable().optional(),
 });
 
 export const StoryboardRawSchema = z.object({
@@ -132,13 +161,33 @@ function describeStoryboardIssuePath(path: PropertyKey[]): string {
  * 식별자 목록이다(characterIdentifier.ts) — display_name 문자열과는
  * 절대 비교하지 않는다. 이 식별자는 ASCII 대문자+숫자 규칙 문자열이라
  * 유니코드 정규화/대소문자/공백 문제가 원천적으로 발생하지 않는다.
+ *
+ * opts.allowedLocationIdentifiers는 이 시리즈에 등록된 Location Set의
+ * LOCATION_A/B/C... 식별자 목록이다. **빈 배열도 유효한 상태**이며
+ * "이 시리즈에는 등록된 장소가 없다"는 뜻이다 — 이 경우 raw에 location
+ * 필드가 아예 없으면 정상(레거시/장소 미설정 프로젝트)이지만, AI가
+ * 임의로 LOCATION_A 같은 값을 반환했다면 그건 존재하지 않는 장소를
+ * 지어낸 것이므로 명시적으로 거부한다(조용히 무시하거나 null로 매핑하지
+ * 않는다) — CHARACTER_Z처럼 목록 밖의 식별자를 거부하는 것과 동일한 원칙.
  */
 export function validateStoryboardAgainstProject(
   raw: StoryboardRaw,
-  opts: { expectedSceneCount: number; allowedIdentifiers: string[] }
+  opts: { expectedSceneCount: number; allowedIdentifiers: string[]; allowedLocationIdentifiers: string[] }
 ): StoryboardValidationResult {
   const errors: string[] = [];
   const allowed = new Set(opts.allowedIdentifiers);
+  const allowedLocations = new Set(opts.allowedLocationIdentifiers);
+
+  function checkLocation(location: string | undefined, where: string) {
+    if (location === undefined) return; // location 필드 생략은 항상 정상.
+    if (allowedLocations.size === 0) {
+      errors.push(`${where}: 이 시리즈에는 등록된 장소가 없는데 장소 식별자 "${location}"가 반환됐습니다.`);
+      return;
+    }
+    if (!allowedLocations.has(location)) {
+      errors.push(`${where}: 등록되지 않은 장소 식별자 "${location}"가 사용됐습니다.`);
+    }
+  }
 
   if (raw.panels.length !== opts.expectedSceneCount) {
     errors.push(`panels 개수(${raw.panels.length})가 요청한 본문 장면 수(${opts.expectedSceneCount})와 다릅니다.`);
@@ -149,6 +198,7 @@ export function validateStoryboardAgainstProject(
       errors.push(`표지: 등록되지 않은 캐릭터 식별자 "${identifier}"가 사용됐습니다.`);
     }
   }
+  checkLocation(raw.cover.location, "표지");
 
   raw.panels.forEach((panel, index) => {
     const expectedNumber = index + 1;
@@ -161,6 +211,7 @@ export function validateStoryboardAgainstProject(
         errors.push(`panel ${panel.panel_number}: 등록되지 않은 캐릭터 식별자 "${identifier}"가 사용됐습니다.`);
       }
     }
+    checkLocation(panel.location, `panel ${panel.panel_number}`);
 
     const panelCharacterSet = new Set(panel.characters);
     for (const line of panel.dialogue) {

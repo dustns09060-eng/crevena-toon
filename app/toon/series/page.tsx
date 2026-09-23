@@ -20,6 +20,9 @@ export default async function SeriesListPage() {
         <Link href="/toon/characters" className="btn">
           캐릭터
         </Link>
+        <Link href="/toon/locations" className="btn">
+          장소
+        </Link>
       </div>
 
       {seriesList.length === 0 ? (

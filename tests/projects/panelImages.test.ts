@@ -14,6 +14,11 @@ vi.mock("../../lib/characters/service", () => ({
   getCharacter: (...args: unknown[]) => getCharacterMock(...args),
 }));
 
+const getLocationMock = vi.fn();
+vi.mock("../../lib/locations/service", () => ({
+  getLocation: (...args: unknown[]) => getLocationMock(...args),
+}));
+
 const generateMock = vi.fn();
 vi.mock("../../src/providers/characterSheetProviderRegistry", () => ({
   getCharacterSheetProvider: () => ({ id: "gemini", generate: generateMock }),
@@ -172,6 +177,16 @@ beforeEach(() => {
   getProjectMock.mockResolvedValue(OWNED_PROJECT);
   getProjectPanelsMock.mockResolvedValue([OWNED_PANEL]);
   getCharacterMock.mockResolvedValue(CHARACTER_WITH_BIBLE);
+  getLocationMock.mockResolvedValue({
+    id: "loc-a",
+    display_name: "우리 집 거실",
+    visual_prompt: "따뜻한 거실",
+    wall_and_floor: null,
+    fixed_furniture: null,
+    window_style: null,
+    recurring_props: null,
+    distinctive_features: null,
+  });
   generateMock.mockResolvedValue({ imageBytes: Buffer.from([1, 2, 3]), provider: "gemini", model: "gemini-2.5-flash-image" });
 });
 
@@ -368,5 +383,54 @@ describe("approvePanelImageAction", () => {
 
     const panelUpdates = currentSupabase._calls["toon_panels.update"] as Record<string, unknown>[];
     expect(panelUpdates[0]).toEqual({ raw_image_url: "user-a/proj-1/raw/1/gen-2.png" });
+  });
+});
+
+describe("updatePanelLocationAction — 021, 기존(확정된) panel에 Location/Time of Day 수동 지정", () => {
+  test("타인 panel은 수정할 수 없다", async () => {
+    getProjectMock.mockResolvedValue(null);
+    const { updatePanelLocationAction } = await import("../../lib/projects/panelImages");
+
+    const result = await updatePanelLocationAction("panel-1", { location_id: "loc-a", time_of_day: "NIGHT" });
+    expect(result.ok).toBe(false);
+  });
+
+  test("타인 장소는 지정할 수 없다 (getLocation이 null 반환)", async () => {
+    getLocationMock.mockResolvedValue(null);
+    const { updatePanelLocationAction } = await import("../../lib/projects/panelImages");
+
+    const result = await updatePanelLocationAction("panel-1", { location_id: "loc-a", time_of_day: null });
+    expect(result.ok).toBe(false);
+  });
+
+  test("잘못된 time_of_day 값은 거부된다", async () => {
+    const { updatePanelLocationAction } = await import("../../lib/projects/panelImages");
+
+    const result = await updatePanelLocationAction("panel-1", {
+      location_id: null,
+      // @ts-expect-error 잘못된 값 테스트
+      time_of_day: "MIDNIGHT_SNACK",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  test("정상 입력이면 location_id/time_of_day만 갱신하고 다른 것(Storyboard/캐릭터/이미지)은 건드리지 않는다", async () => {
+    const { updatePanelLocationAction } = await import("../../lib/projects/panelImages");
+
+    const result = await updatePanelLocationAction("panel-1", { location_id: "loc-a", time_of_day: "NIGHT" });
+    expect(result.ok).toBe(true);
+    expect(currentSupabase._calls["toon_panels.update"]).toEqual([{ location_id: "loc-a", time_of_day: "NIGHT" }]);
+    expect(currentSupabase._calls["toon_panel_images.insert"]).toBeUndefined();
+    expect(currentSupabase._calls["toon_characters.update"]).toBeUndefined();
+  });
+
+  test("location_id를 null로 지정해 장소 연결을 해제할 수 있다", async () => {
+    const { updatePanelLocationAction } = await import("../../lib/projects/panelImages");
+
+    const result = await updatePanelLocationAction("panel-1", { location_id: null, time_of_day: null });
+    expect(result.ok).toBe(true);
+    expect(currentSupabase._calls["toon_panels.update"]).toEqual([{ location_id: null, time_of_day: null }]);
+    // location_id가 null이면 getLocation 조회 자체를 하지 않는다.
+    expect(getLocationMock).not.toHaveBeenCalled();
   });
 });

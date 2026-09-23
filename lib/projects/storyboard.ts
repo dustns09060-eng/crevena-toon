@@ -15,6 +15,32 @@ import {
   buildIdentifierToIdMap,
   MAX_IDENTIFIABLE_CHARACTERS,
 } from "../../src/providers/characterIdentifier";
+import { assignLocationIdentifiers, buildLocationIdentifierToIdMap } from "../../src/providers/locationIdentifier";
+import { getSeriesLocations } from "../series/service";
+import type { ToonProject } from "../../src/db/types";
+
+/**
+ * 021 — 프로젝트가 속한 시리즈의 Location Set을 LOCATION_A/B/C...
+ * 식별자와 함께 resolve한다. 시리즈가 없거나(독립 프로젝트) 그
+ * 시리즈에 연결된 장소가 하나도 없으면 빈 배열 — 이 경우 Storyboard
+ * 프롬프트에서 Location 섹션 자체가 생략되고, AI는 location 필드를
+ * 채우지 않는다(정상 동작, 레거시와 동일).
+ */
+async function resolveProjectLocations(supabase: Awaited<ReturnType<typeof createClient>>, project: ToonProject) {
+  const locations = project.series_id ? await getSeriesLocations(supabase, project.series_id) : [];
+  return assignLocationIdentifiers(
+    locations.map((l) => ({
+      id: l.id,
+      display_name: l.display_name,
+      visual_prompt: l.visual_prompt,
+      wall_and_floor: l.wall_and_floor,
+      fixed_furniture: l.fixed_furniture,
+      window_style: l.window_style,
+      recurring_props: l.recurring_props,
+      distinctive_features: l.distinctive_features,
+    }))
+  ).map(({ identifier, location }) => ({ ...location, identifier }));
+}
 
 const inFlightStoryboardGeneration = new Set<string>();
 
@@ -68,12 +94,14 @@ export async function generateStoryboardAction(projectId: string): Promise<Gener
       ...character,
       identifier,
     }));
+    const identifiedLocations = await resolveProjectLocations(supabase, project);
 
     const provider = getStoryboardProvider();
     const raw = await provider.generateStoryboard({
       topic: project.topic,
       panelCount: project.panel_count,
       characters: identifiedCharacters,
+      locations: identifiedLocations,
     });
 
     const validation = validateStoryboardAgainstProject(raw, {
@@ -81,6 +109,7 @@ export async function generateStoryboardAction(projectId: string): Promise<Gener
       // 1개이므로 본문 장면 수는 항상 panel_count - 1이다.
       expectedSceneCount: project.panel_count - 1,
       allowedIdentifiers: identifiedCharacters.map((c) => c.identifier),
+      allowedLocationIdentifiers: identifiedLocations.map((l) => l.identifier),
     });
     if (!validation.valid) {
       return {
@@ -92,7 +121,10 @@ export async function generateStoryboardAction(projectId: string): Promise<Gener
     const identifierToId = buildIdentifierToIdMap(
       identifiedCharacters.map((c) => ({ identifier: c.identifier, character: c }))
     );
-    const draft = mapStoryboardRawToDraft(raw, identifierToId);
+    const locationIdentifierToId = buildLocationIdentifierToIdMap(
+      identifiedLocations.map((l) => ({ identifier: l.identifier, location: l }))
+    );
+    const draft = mapStoryboardRawToDraft(raw, identifierToId, locationIdentifierToId);
 
     return { ok: true, draft };
   } catch (e) {
@@ -131,7 +163,7 @@ function getExistingCoverState(existingPanels: { panel_type: string }[]): Existi
 function buildPanelRowsFromDraft(
   projectId: string,
   draft: StoryboardDraft,
-  opts: { allowedCharacterIds: Set<string>; coverState: ExistingCoverState }
+  opts: { allowedCharacterIds: Set<string>; allowedLocationIds: Set<string>; coverState: ExistingCoverState }
 ): BuildPanelRowsResult {
   const draftCovers = draft.panels.filter((p) => p.panel_type === "cover");
 
@@ -160,6 +192,9 @@ function buildPanelRowsFromDraft(
     }
     if (panel.character_ids.length > MAX_CHARACTERS_PER_PANEL) {
       return { ok: false, message: `한 장면에는 최대 ${MAX_CHARACTERS_PER_PANEL}명의 등장인물을 사용할 수 있어요.` };
+    }
+    if (panel.location_id && !opts.allowedLocationIds.has(panel.location_id)) {
+      return { ok: false, message: "허용되지 않은 장소가 포함되어 있습니다." };
     }
 
     const dialogue = panel.dialogue.map((d) => ({
@@ -193,6 +228,8 @@ function buildPanelRowsFromDraft(
       image_prompt: panel.image_prompt,
       cover_title: panel.cover_title,
       cover_subtitle: panel.cover_subtitle,
+      location_id: panel.location_id,
+      time_of_day: panel.time_of_day,
     });
   }
 
@@ -221,8 +258,14 @@ export async function saveStoryboardAction(
 
   const characters = await getProjectCharacters(supabase, projectId);
   const allowedIds = new Set(characters.map((c) => c.id));
+  const identifiedLocations = await resolveProjectLocations(supabase, project);
+  const allowedLocationIds = new Set(identifiedLocations.map((l) => l.id));
 
-  const built = buildPanelRowsFromDraft(projectId, draft, { allowedCharacterIds: allowedIds, coverState });
+  const built = buildPanelRowsFromDraft(projectId, draft, {
+    allowedCharacterIds: allowedIds,
+    allowedLocationIds,
+    coverState,
+  });
   if (!built.ok) return { ok: false, message: built.message };
 
   const { error: upsertErr } = await supabase
@@ -374,11 +417,17 @@ export async function regenerateStoryboardWithSettingsAction(
       ...character,
       identifier,
     }));
+    const identifiedLocations = await resolveProjectLocations(supabase, project);
 
     const provider = getStoryboardProvider();
     let raw;
     try {
-      raw = await provider.generateStoryboard({ topic, panelCount: newPanelCount, characters: identifiedCharacters });
+      raw = await provider.generateStoryboard({
+        topic,
+        panelCount: newPanelCount,
+        characters: identifiedCharacters,
+        locations: identifiedLocations,
+      });
     } catch (e) {
       // AI 호출 자체가 실패해도 DB는 아직 전혀 바뀌지 않았다.
       return { ok: false, message: e instanceof Error ? e.message : "스토리보드 생성 중 오류가 발생했습니다." };
@@ -387,6 +436,7 @@ export async function regenerateStoryboardWithSettingsAction(
     const scheduleValidation = validateStoryboardAgainstProject(raw, {
       expectedSceneCount: newPanelCount - 1,
       allowedIdentifiers: identifiedCharacters.map((c) => c.identifier),
+      allowedLocationIdentifiers: identifiedLocations.map((l) => l.identifier),
     });
     if (!scheduleValidation.valid) {
       // 검증 실패 — 여전히 DB 미변경. 기존 topic/panel_count/storyboard/
@@ -400,10 +450,14 @@ export async function regenerateStoryboardWithSettingsAction(
     const identifierToId = buildIdentifierToIdMap(
       identifiedCharacters.map((c) => ({ identifier: c.identifier, character: c }))
     );
-    const draft = mapStoryboardRawToDraft(raw, identifierToId);
+    const locationIdentifierToId = buildLocationIdentifierToIdMap(
+      identifiedLocations.map((l) => ({ identifier: l.identifier, location: l }))
+    );
+    const draft = mapStoryboardRawToDraft(raw, identifierToId, locationIdentifierToId);
 
     const built = buildPanelRowsFromDraft(projectId, draft, {
       allowedCharacterIds: new Set(newCharacterIds),
+      allowedLocationIds: new Set(identifiedLocations.map((l) => l.id)),
       coverState,
     });
     if (!built.ok) {

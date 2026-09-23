@@ -7,6 +7,11 @@ vi.mock("../../lib/characters/service", () => ({
   getCharacter: (...args: unknown[]) => getCharacterMock(...args),
 }));
 
+const getLocationMock = vi.fn();
+vi.mock("../../lib/locations/service", () => ({
+  getLocation: (...args: unknown[]) => getLocationMock(...args),
+}));
+
 interface MockConfig {
   series?: { id: string; user_id: string } | null;
 }
@@ -74,6 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   currentSupabase = createSupabaseMock({ series: { id: "series-1", user_id: "user-a" } });
   getCharacterMock.mockResolvedValue({ id: "char-a", display_name: "엄마" });
+  getLocationMock.mockResolvedValue({ id: "loc-a", display_name: "우리 집 거실" });
 });
 
 describe("createSeriesAction", () => {
@@ -159,6 +165,77 @@ describe("listSeriesCharactersAction", () => {
     const { listSeriesCharactersAction } = await import("../../lib/series/actions");
 
     const result = await listSeriesCharactersAction("series-1");
+    expect(result).toEqual([]);
+  });
+});
+
+describe("linkLocationToSeriesAction — 기존 장소 재사용", () => {
+  test("타인 시리즈에는 연결할 수 없다", async () => {
+    currentSupabase = createSupabaseMock({ series: null });
+    const { linkLocationToSeriesAction } = await import("../../lib/series/actions");
+
+    const result = await linkLocationToSeriesAction("series-1", "loc-a");
+    expect(result.ok).toBe(false);
+  });
+
+  test("타인 장소는 연결할 수 없다 (getLocation이 null 반환)", async () => {
+    getLocationMock.mockResolvedValue(null);
+    const { linkLocationToSeriesAction } = await import("../../lib/series/actions");
+
+    const result = await linkLocationToSeriesAction("series-1", "loc-a");
+    expect(result.ok).toBe(false);
+  });
+
+  test("기존 장소를 시리즈에 연결하면 toon_series_locations에만 upsert(ignoreDuplicates)하고, 장소를 새로 만들지 않는다", async () => {
+    const { linkLocationToSeriesAction } = await import("../../lib/series/actions");
+
+    const result = await linkLocationToSeriesAction("series-1", "loc-a");
+    expect(result.ok).toBe(true);
+    expect(currentSupabase._calls["toon_series_locations.upsert"]).toEqual([
+      {
+        payload: { series_id: "series-1", location_id: "loc-a" },
+        options: { onConflict: "series_id,location_id", ignoreDuplicates: true },
+      },
+    ]);
+    expect(currentSupabase._calls["toon_locations.insert"]).toBeUndefined();
+  });
+
+  test("이미 연결된 장소를 다시 연결해도(재시도) 실패하지 않는다 — upsert ignoreDuplicates로 멱등 처리", async () => {
+    const { linkLocationToSeriesAction } = await import("../../lib/series/actions");
+
+    const first = await linkLocationToSeriesAction("series-1", "loc-a");
+    const second = await linkLocationToSeriesAction("series-1", "loc-a");
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(currentSupabase._calls["toon_series_locations.upsert"]).toHaveLength(2);
+  });
+});
+
+describe("unlinkLocationFromSeriesAction", () => {
+  test("타인 시리즈에서는 연결을 해제할 수 없다", async () => {
+    currentSupabase = createSupabaseMock({ series: null });
+    const { unlinkLocationFromSeriesAction } = await import("../../lib/series/actions");
+
+    const result = await unlinkLocationFromSeriesAction("series-1", "loc-a");
+    expect(result.ok).toBe(false);
+  });
+
+  test("정상 요청이면 조인 행만 삭제한다 (장소 자체는 삭제되지 않음)", async () => {
+    const { unlinkLocationFromSeriesAction } = await import("../../lib/series/actions");
+
+    const result = await unlinkLocationFromSeriesAction("series-1", "loc-a");
+    expect(result.ok).toBe(true);
+    expect(currentSupabase._calls["toon_series_locations.delete"]).toHaveLength(1);
+    expect(currentSupabase._calls["toon_locations.delete"]).toBeUndefined();
+  });
+});
+
+describe("listSeriesLocationsAction", () => {
+  test("타인 시리즈는 빈 배열을 반환한다", async () => {
+    currentSupabase = createSupabaseMock({ series: null });
+    const { listSeriesLocationsAction } = await import("../../lib/series/actions");
+
+    const result = await listSeriesLocationsAction("series-1");
     expect(result).toEqual([]);
   });
 });

@@ -11,9 +11,13 @@
 export const COMMON_NEGATIVE_IMAGE_CONSTRAINTS: readonly string[] = [
   "no text",
   "no letters",
+  "no lettering",
   "no words",
   "no captions",
   "no speech bubbles",
+  "no empty speech bubbles",
+  "no text boxes",
+  "no comic UI elements",
   "no signage with readable text",
   "no signature",
   "no fake artist signature",

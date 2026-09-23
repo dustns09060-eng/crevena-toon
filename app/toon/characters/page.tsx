@@ -25,6 +25,9 @@ export default async function CharactersPage() {
           <Link href="/toon/series" className="btn">
             시리즈
           </Link>
+          <Link href="/toon/locations" className="btn">
+            장소
+          </Link>
           <Link href="/toon/projects" className="btn">
             프로젝트
           </Link>

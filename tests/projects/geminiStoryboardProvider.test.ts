@@ -78,6 +78,7 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
       topic: "소재",
       panelCount: 2,
       characters: baseCharacters,
+      locations: [],
     });
 
     expect(generateContentMock).toHaveBeenCalledTimes(1);
@@ -94,6 +95,7 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
       topic: "소재",
       panelCount: 2,
       characters: baseCharacters,
+      locations: [],
     });
 
     expect(generateContentMock).toHaveBeenCalledTimes(2);
@@ -110,6 +112,7 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
       topic: "소재",
       panelCount: 2,
       characters: baseCharacters,
+      locations: [],
     });
 
     expect(generateContentMock).toHaveBeenCalledTimes(2);
@@ -123,7 +126,7 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
     const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
 
     await expect(
-      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters, locations: [] })
     ).rejects.toThrow("비어");
     expect(generateContentMock).toHaveBeenCalledTimes(2);
   });
@@ -133,7 +136,7 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
     const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
 
     await expect(
-      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters, locations: [] })
     ).rejects.toThrow(/안전 정책/);
     expect(generateContentMock).toHaveBeenCalledTimes(1);
   });
@@ -143,7 +146,7 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
     const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
 
     await expect(
-      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters, locations: [] })
     ).rejects.toThrow();
     expect(generateContentMock).toHaveBeenCalledTimes(1);
   });
@@ -153,7 +156,7 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
     const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
 
     await expect(
-      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters, locations: [] })
     ).rejects.toThrow(/올바른 JSON/);
     // text 자체는 있었으므로 "비어있음" 재시도 루프를 아예 타지 않는다 — 1회만 호출.
     expect(generateContentMock).toHaveBeenCalledTimes(1);
@@ -165,7 +168,7 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
     const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
 
     await expect(
-      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters, locations: [] })
     ).rejects.toThrow();
     expect(generateContentMock).toHaveBeenCalledTimes(1);
   });
@@ -212,6 +215,14 @@ describe("geminiStoryboardProvider 프롬프트 규칙", () => {
 
   test("본문 텍스트(dialogue.text 등)에는 이름/애칭을 써도 된다는 예외가 명시돼 있다", () => {
     expect(source).toMatch(/identifier 규칙은 characters\/dialogue\.character 필드에만 적용됩니다/);
+  });
+
+  test("image_prompt가 scene_description의 장소/행동/소품/시간대와 모순되면 안 된다는 규칙이 있다", () => {
+    // Production 실사용 결과 scene(한글)과 image_prompt(영문)가 서로
+    // 다른 장소/시간대를 묘사해 이미지가 이를 억지로 절충하는 문제가
+    // 발견되어 추가된 규칙.
+    expect(source).toMatch(/image_prompt는 반드시 같은 컷의 scene_description.*시각적으로 구현해야 합니다/s);
+    expect(source).toMatch(/서로 모순되면 안 됩니다/);
   });
 
   test("프롬프트에 캐릭터 identifier 목록을 전달한다(buildIdentifiedCharacterContextText 사용)", () => {

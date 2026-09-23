@@ -1,9 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "../../../../lib/supabase/server";
-import { getSeries, getSeriesCharacters } from "../../../../lib/series/service";
+import { getSeries, getSeriesCharacters, getSeriesLocations } from "../../../../lib/series/service";
 import { getCharacters } from "../../../../lib/characters/service";
+import { getLocations } from "../../../../lib/locations/service";
 import SeriesCharacterManager from "./SeriesCharacterManager";
+import SeriesLocationManager from "./SeriesLocationManager";
 
 export default async function SeriesDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,9 +18,11 @@ export default async function SeriesDetailPage({ params }: { params: Promise<{ i
   const series = await getSeries(supabase, id);
   if (!series) notFound();
 
-  const [seriesCharacters, allCharacters] = await Promise.all([
+  const [seriesCharacters, allCharacters, seriesLocations, allLocations] = await Promise.all([
     getSeriesCharacters(supabase, id),
     getCharacters(supabase),
+    getSeriesLocations(supabase, id),
+    getLocations(supabase),
   ]);
 
   return (
@@ -39,6 +43,12 @@ export default async function SeriesDetailPage({ params }: { params: Promise<{ i
         seriesId={series.id}
         allCharacters={allCharacters.map((c) => ({ id: c.id, display_name: c.display_name, role: c.role ?? "" }))}
         initialLinkedIds={seriesCharacters.map((c) => c.id)}
+      />
+
+      <SeriesLocationManager
+        seriesId={series.id}
+        allLocations={allLocations.map((l) => ({ id: l.id, display_name: l.display_name, visual_prompt: l.visual_prompt }))}
+        initialLinkedIds={seriesLocations.map((l) => l.id)}
       />
     </main>
   );

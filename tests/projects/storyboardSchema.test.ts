@@ -220,6 +220,48 @@ describe("StoryboardRawSchema — optional 필드 undefined 처리 (Production 2
   });
 });
 
+describe("StoryboardRawSchema — location/time_of_day 필드(021)", () => {
+  test("panel.location이 LOCATION_A 형식이고 time_of_day가 유효하면 통과한다", () => {
+    const board = makeStoryboard(5);
+    board.panels[0].location = "LOCATION_A";
+    board.panels[0].time_of_day = "NIGHT";
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(true);
+  });
+
+  test("panel.location과 cover.location이 둘 다 생략되어도 통과한다(레거시/장소 미설정)", () => {
+    expect(StoryboardRawSchema.safeParse(makeStoryboard(5)).success).toBe(true);
+  });
+
+  test("location이 LOCATION_A 형식이 아니면(예: 'location_a', 'LOCATION_1') 거부된다", () => {
+    const board1 = makeStoryboard(5);
+    board1.panels[0].location = "location_a";
+    expect(StoryboardRawSchema.safeParse(board1).success).toBe(false);
+
+    const board2 = makeStoryboard(5);
+    board2.panels[0].location = "LOCATION_1";
+    expect(StoryboardRawSchema.safeParse(board2).success).toBe(false);
+  });
+
+  test("time_of_day가 허용된 5개 값이 아니면 거부된다", () => {
+    const board = makeStoryboard(5);
+    // @ts-expect-error 잘못된 값 테스트
+    board.panels[0].time_of_day = "MIDNIGHT_SNACK";
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+  });
+
+  test("time_of_day가 생략되어도(undefined) 통과한다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    const panels = board.panels as Record<string, unknown>[];
+    delete panels[0].time_of_day;
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(true);
+  });
+
+  test("cover.location도 동일한 규칙을 따른다", () => {
+    const board = makeStoryboard(5, { location: "LOCATION_C", time_of_day: "EVENING" });
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(true);
+  });
+});
+
 describe("describeStoryboardParseIssues — 서버 로그용 실패 위치 설명", () => {
   test("cover 필드 실패는 'cover.<field>'로 표시된다", () => {
     const board = makeStoryboard(5) as Record<string, unknown>;
@@ -252,6 +294,7 @@ describe("validateStoryboardAgainstProject", () => {
     const result = validateStoryboardAgainstProject(makeStoryboard(5), {
       expectedSceneCount: 5,
       allowedIdentifiers,
+      allowedLocationIdentifiers: [],
     });
     expect(result.valid).toBe(true);
   });
@@ -260,6 +303,7 @@ describe("validateStoryboardAgainstProject", () => {
     const result = validateStoryboardAgainstProject(makeStoryboard(9), {
       expectedSceneCount: 9,
       allowedIdentifiers,
+      allowedLocationIdentifiers: [],
     });
     expect(result.valid).toBe(true);
   });
@@ -268,6 +312,7 @@ describe("validateStoryboardAgainstProject", () => {
     const result = validateStoryboardAgainstProject(makeStoryboard(19), {
       expectedSceneCount: 19,
       allowedIdentifiers,
+      allowedLocationIdentifiers: [],
     });
     expect(result.valid).toBe(true);
   });
@@ -276,6 +321,7 @@ describe("validateStoryboardAgainstProject", () => {
     const result = validateStoryboardAgainstProject(makeStoryboard(5), {
       expectedSceneCount: 8,
       allowedIdentifiers,
+      allowedLocationIdentifiers: [],
     });
     expect(result.valid).toBe(false);
   });
@@ -283,20 +329,20 @@ describe("validateStoryboardAgainstProject", () => {
   test("panel_number가 1부터 연속되지 않으면 거부된다", () => {
     const board = makeStoryboard(5);
     board.panels[2].panel_number = 10; // 연속성 깨뜨림
-    const result = validateStoryboardAgainstProject(board, { expectedSceneCount: 5, allowedIdentifiers });
+    const result = validateStoryboardAgainstProject(board, { expectedSceneCount: 5, allowedIdentifiers, allowedLocationIdentifiers: [] });
     expect(result.valid).toBe(false);
   });
 
   test("허용되지 않은 identifier가 본문에 있으면 거부된다", () => {
     const board = makeStoryboard(5);
     board.panels[0].characters = ["CHARACTER_Z"];
-    const result = validateStoryboardAgainstProject(board, { expectedSceneCount: 5, allowedIdentifiers });
+    const result = validateStoryboardAgainstProject(board, { expectedSceneCount: 5, allowedIdentifiers, allowedLocationIdentifiers: [] });
     expect(result.valid).toBe(false);
   });
 
   test("허용되지 않은 identifier가 표지에 있으면 거부된다", () => {
     const board = makeStoryboard(5, { characters: ["CHARACTER_Z"] });
-    const result = validateStoryboardAgainstProject(board, { expectedSceneCount: 5, allowedIdentifiers });
+    const result = validateStoryboardAgainstProject(board, { expectedSceneCount: 5, allowedIdentifiers, allowedLocationIdentifiers: [] });
     expect(result.valid).toBe(false);
   });
 
@@ -304,7 +350,7 @@ describe("validateStoryboardAgainstProject", () => {
     const board = makeStoryboard(5);
     board.panels[0].characters = ["CHARACTER_A"];
     board.panels[0].dialogue = [{ character: "CHARACTER_B", text: "안녕" }]; // 이 컷엔 B가 등장하지 않음
-    const result = validateStoryboardAgainstProject(board, { expectedSceneCount: 5, allowedIdentifiers });
+    const result = validateStoryboardAgainstProject(board, { expectedSceneCount: 5, allowedIdentifiers, allowedLocationIdentifiers: [] });
     expect(result.valid).toBe(false);
   });
 
@@ -318,7 +364,64 @@ describe("validateStoryboardAgainstProject", () => {
     const result = validateStoryboardAgainstProject(makeStoryboard(5), {
       expectedSceneCount: 5,
       allowedIdentifiers: [nfd],
+      allowedLocationIdentifiers: [],
     });
     expect(result.valid).toBe(true);
+  });
+
+  describe("장소(location) 교차 검증 — Location Set 있음/없음", () => {
+    test("Location Set 없음 + location 필드 생략 → 통과", () => {
+      const result = validateStoryboardAgainstProject(makeStoryboard(5), {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: [],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    test("Location Set 없음 + AI가 LOCATION_A를 반환 → 거부(조용히 무시/null 매핑하지 않는다)", () => {
+      const board = makeStoryboard(5);
+      board.panels[0].location = "LOCATION_A";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: [],
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    test("Location Set 있음 + 허용된 LOCATION_A → 통과", () => {
+      const board = makeStoryboard(5);
+      board.panels[0].location = "LOCATION_A";
+      board.cover.location = "LOCATION_B";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: ["LOCATION_A", "LOCATION_B"],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    test("Location Set 있음 + 등록되지 않은 LOCATION_Z → 거부", () => {
+      const board = makeStoryboard(5);
+      board.panels[0].location = "LOCATION_Z";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: ["LOCATION_A"],
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    test("time_of_day만 있고 location은 없음 → 통과(둘은 독립적)", () => {
+      const board = makeStoryboard(5);
+      board.panels[0].time_of_day = "NIGHT";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: [],
+      });
+      expect(result.valid).toBe(true);
+    });
   });
 });

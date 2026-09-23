@@ -131,6 +131,9 @@ export interface ToonNarrationBubble {
 /** 019 마이그레이션 — 표지/본문 컷 구분. */
 export type ToonPanelType = "cover" | "scene";
 
+/** 021 마이그레이션 — 컷의 시간대. 전부 nullable(레거시 panel은 null). */
+export type ToonTimeOfDay = "MORNING" | "DAY" | "EVENING" | "NIGHT" | "LATE_NIGHT";
+
 /** 표지 제목의 배치. narration_bubble과 동일한 형태(0~1 normalized). */
 export interface ToonCoverTitleBubble {
   x: number;
@@ -162,6 +165,10 @@ export interface ToonPanel {
   image_url: string | null;
   raw_image_url: string | null;
   generation_version: number;
+  /** 021 마이그레이션 — 이 컷이 어느 Location Bible을 쓰는지. 레거시 panel은 null. */
+  location_id: Uuid | null;
+  /** 021 마이그레이션 — 이 컷의 시간대. 레거시 panel은 null. */
+  time_of_day: ToonTimeOfDay | null;
   created_at: IsoTimestamp;
   updated_at: IsoTimestamp;
 }
@@ -199,6 +206,37 @@ export interface ToonSeries {
 export interface ToonSeriesCharacter {
   series_id: Uuid;
   character_id: Uuid;
+  created_at: IsoTimestamp;
+}
+
+/**
+ * 021 마이그레이션 — Location Bible. Character(엄마/별이/달이)와 완전히
+ * 별개의 "장소" 엔티티. user 소유의 전역 장소 풀이며, toon_series_locations로
+ * 시리즈에 연결해 여러 화(에피소드)에서 같은 집을 재사용한다.
+ *
+ * wall_and_floor/fixed_furniture/window_style/recurring_props/
+ * distinctive_features는 전부 nullable인 "고급 설정"이다 — 사용자가
+ * 반드시 입력해야 하는 값은 display_name + visual_prompt뿐이다.
+ */
+export interface ToonLocation {
+  id: Uuid;
+  user_id: Uuid;
+  display_name: string;
+  visual_prompt: string;
+  wall_and_floor: string | null;
+  fixed_furniture: string | null;
+  window_style: string | null;
+  recurring_props: string | null;
+  distinctive_features: string | null;
+  negative_constraints: string[];
+  created_at: IsoTimestamp;
+  updated_at: IsoTimestamp;
+}
+
+/** Series <-> Location N:M. 한 장소가 여러 시리즈에 속할 수 있다. */
+export interface ToonSeriesLocation {
+  series_id: Uuid;
+  location_id: Uuid;
   created_at: IsoTimestamp;
 }
 

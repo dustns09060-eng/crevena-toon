@@ -31,6 +31,8 @@ function panelsToDraftPanels(panels: ToonPanel[]): StoryboardDraftPanel[] {
     image_prompt: p.image_prompt ?? "",
     cover_title: p.cover_title,
     cover_subtitle: p.cover_subtitle,
+    location_id: p.location_id,
+    time_of_day: p.time_of_day,
   }));
 }
 
@@ -50,19 +52,31 @@ function makeEmptyScenePanel(panelNumber: number): StoryboardDraftPanel {
     image_prompt: "",
     cover_title: null,
     cover_subtitle: null,
+    location_id: null,
+    time_of_day: null,
   };
 }
+
+const TIME_OF_DAY_OPTIONS: { value: NonNullable<StoryboardDraftPanel["time_of_day"]>; label: string }[] = [
+  { value: "MORNING", label: "아침" },
+  { value: "DAY", label: "낮" },
+  { value: "EVENING", label: "저녁" },
+  { value: "NIGHT", label: "밤" },
+  { value: "LATE_NIGHT", label: "늦은 밤" },
+];
 
 export default function StoryboardEditor({
   project,
   characters,
   allCharacters,
+  allLocations,
   initialPanels,
   panelImagesData,
 }: {
   project: ToonProject;
   characters: ProjectCharacterContext[];
   allCharacters: { id: string; display_name: string; role: string }[];
+  allLocations: { id: string; display_name: string }[];
   initialPanels: ToonPanel[];
   panelImagesData: {
     readinessErrors: string[];
@@ -467,6 +481,45 @@ export default function StoryboardEditor({
                   />
                 </div>
 
+                {allLocations.length > 0 && (
+                  <div className="field">
+                    <label>장소 (선택)</label>
+                    <select
+                      className="input"
+                      value={panel.location_id ?? ""}
+                      onChange={(e) => updatePanel(index, { location_id: e.target.value || null })}
+                    >
+                      <option value="">선택 안 함</option>
+                      {allLocations.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.display_name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="hint">AI가 자동으로 배정했어요. 다르면 직접 바꿔주세요.</p>
+                  </div>
+                )}
+
+                <div className="field">
+                  <label>시간대 (선택)</label>
+                  <select
+                    className="input"
+                    value={panel.time_of_day ?? ""}
+                    onChange={(e) =>
+                      updatePanel(index, {
+                        time_of_day: (e.target.value || null) as StoryboardDraftPanel["time_of_day"],
+                      })
+                    }
+                  >
+                    <option value="">선택 안 함</option>
+                    {TIME_OF_DAY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="field">
                   <label>등장인물 (최대 {MAX_CHARACTERS_PER_PANEL}명)</label>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
@@ -586,6 +639,7 @@ export default function StoryboardEditor({
                 panels={initialPanels}
                 initialImages={panelImagesData.images}
                 initialReadinessErrors={panelImagesData.readinessErrors}
+                allLocations={allLocations}
               />
             </div>
           )}

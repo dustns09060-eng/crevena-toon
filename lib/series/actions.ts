@@ -7,11 +7,15 @@ import {
   getSeries,
   getSeriesCharacters,
   getSeriesList,
+  getSeriesLocations,
   linkCharacterToSeries,
+  linkLocationToSeries,
   unlinkCharacterFromSeries,
+  unlinkLocationFromSeries,
 } from "./service";
 import { getCharacter } from "../characters/service";
-import type { ToonCharacter, ToonSeries } from "../../src/db/types";
+import { getLocation } from "../locations/service";
+import type { ToonCharacter, ToonLocation, ToonSeries } from "../../src/db/types";
 
 async function requireUser() {
   const supabase = await createClient();
@@ -112,6 +116,63 @@ export async function unlinkCharacterFromSeriesAction(seriesId: string, characte
   } catch (e) {
     console.error("[series] unlinkCharacterFromSeriesAction 실패", { seriesId, characterId, error: e });
     return { ok: false, message: "캐릭터 연결 해제에 실패했습니다." };
+  }
+
+  revalidatePath(`/toon/series/${seriesId}`);
+  return { ok: true };
+}
+
+export async function listSeriesLocationsAction(seriesId: string): Promise<ToonLocation[]> {
+  const owned = await requireUser();
+  if ("error" in owned) return [];
+
+  const series = await getSeries(owned.supabase, seriesId);
+  if (!series) return [];
+
+  return getSeriesLocations(owned.supabase, seriesId);
+}
+
+/**
+ * 이미 존재하는 장소(Location Bible)를 시리즈에 연결한다. Character와
+ * 동일한 원칙 — 장소를 새로 만들거나 재생성하지 않고 조인 행만 추가한다.
+ */
+export async function linkLocationToSeriesAction(seriesId: string, locationId: string): Promise<LinkCharacterState> {
+  const owned = await requireUser();
+  if ("error" in owned) return { ok: false, message: owned.error };
+  const { supabase } = owned;
+
+  const series = await getSeries(supabase, seriesId);
+  if (!series) return { ok: false, message: "시리즈를 찾을 수 없거나 접근 권한이 없습니다." };
+
+  // getLocation도 RLS로 스코프되므로 남의 location_id면 null이 되어
+  // 별도 소유권 비교 없이 타인 장소 연결 시도가 차단된다.
+  const location = await getLocation(supabase, locationId);
+  if (!location) return { ok: false, message: "장소를 찾을 수 없거나 접근 권한이 없습니다." };
+
+  try {
+    await linkLocationToSeries(supabase, seriesId, locationId);
+  } catch (e) {
+    console.error("[series] linkLocationToSeriesAction 실패", { seriesId, locationId, error: e });
+    return { ok: false, message: "장소 연결에 실패했습니다." };
+  }
+
+  revalidatePath(`/toon/series/${seriesId}`);
+  return { ok: true };
+}
+
+export async function unlinkLocationFromSeriesAction(seriesId: string, locationId: string): Promise<LinkCharacterState> {
+  const owned = await requireUser();
+  if ("error" in owned) return { ok: false, message: owned.error };
+  const { supabase } = owned;
+
+  const series = await getSeries(supabase, seriesId);
+  if (!series) return { ok: false, message: "시리즈를 찾을 수 없거나 접근 권한이 없습니다." };
+
+  try {
+    await unlinkLocationFromSeries(supabase, seriesId, locationId);
+  } catch (e) {
+    console.error("[series] unlinkLocationFromSeriesAction 실패", { seriesId, locationId, error: e });
+    return { ok: false, message: "장소 연결 해제에 실패했습니다." };
   }
 
   revalidatePath(`/toon/series/${seriesId}`);

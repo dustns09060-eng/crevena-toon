@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ToonCharacter, ToonSeries } from "../../src/db/types";
+import type { ToonCharacter, ToonLocation, ToonSeries } from "../../src/db/types";
 
 export async function createSeries(supabase: SupabaseClient, title: string): Promise<ToonSeries> {
   const { data, error } = await supabase.from("toon_series").insert({ title }).select().single();
@@ -73,5 +73,56 @@ export async function unlinkCharacterFromSeries(
     .delete()
     .eq("series_id", seriesId)
     .eq("character_id", characterId);
+  if (error) throw error;
+}
+
+/**
+ * 이 시리즈에 연결된 장소 목록(= "Series Location Set"). Character와
+ * 완전히 동일한 패턴 — 장소 실체는 toon_locations(사용자 전역 풀)에
+ * 있고, 여기서는 toon_series_locations 조인 결과만 펼쳐서 준다.
+ */
+export async function getSeriesLocations(supabase: SupabaseClient, seriesId: string): Promise<ToonLocation[]> {
+  const { data, error } = await supabase
+    .from("toon_series_locations")
+    .select("toon_locations(*)")
+    .eq("series_id", seriesId);
+  if (error) throw error;
+
+  return (data ?? [])
+    .map((row: { toon_locations: ToonLocation | ToonLocation[] | null }) =>
+      Array.isArray(row.toon_locations) ? row.toon_locations[0] : row.toon_locations
+    )
+    .filter((l): l is ToonLocation => Boolean(l));
+}
+
+/**
+ * 이미 존재하는 location_id를 시리즈에 연결한다. linkCharacterToSeries와
+ * 동일하게 upsert + ignoreDuplicates로 멱등 처리한다 — 재시도로 인한
+ * PK 충돌 에러("연결에 실패했습니다")를 방지한다.
+ */
+export async function linkLocationToSeries(
+  supabase: SupabaseClient,
+  seriesId: string,
+  locationId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("toon_series_locations")
+    .upsert(
+      { series_id: seriesId, location_id: locationId },
+      { onConflict: "series_id,location_id", ignoreDuplicates: true }
+    );
+  if (error) throw error;
+}
+
+export async function unlinkLocationFromSeries(
+  supabase: SupabaseClient,
+  seriesId: string,
+  locationId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("toon_series_locations")
+    .delete()
+    .eq("series_id", seriesId)
+    .eq("location_id", locationId);
   if (error) throw error;
 }
