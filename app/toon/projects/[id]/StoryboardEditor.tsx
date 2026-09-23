@@ -539,6 +539,23 @@ export default function StoryboardEditor({
                   />
                 </div>
 
+                <details className="field">
+                  <summary style={{ cursor: "pointer" }}>고급 설정 — 이미지 연출 지시</summary>
+                  <div style={{ marginTop: 8 }}>
+                    <label>이미지 연출 지시 (선택)</label>
+                    <textarea
+                      className="textarea"
+                      value={panel.image_prompt}
+                      onChange={(e) => updatePanel(index, { image_prompt: e.target.value })}
+                      maxLength={500}
+                    />
+                    <p className="hint">
+                      AI가 이미지를 그릴 때 참고하는 카메라 구도/동작 지시예요. 장면과 다른 내용을 그리거나
+                      원치 않는 동작(예: 점프하는 중간 동작)이 나온다면 여기서 직접 고쳐보세요.
+                    </p>
+                  </div>
+                </details>
+
                 {panel.temp_location_key && (
                   <div className="field">
                     <label>장소</label>
