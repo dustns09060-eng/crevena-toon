@@ -49,9 +49,17 @@ export async function linkCharacterToSeries(
   seriesId: string,
   characterId: string
 ): Promise<void> {
+  // upsert + ignoreDuplicates: 이미 연결되어 있으면(예: 이전 시도가 실제로는
+  // 성공했지만 클라이언트가 그 사실을 놓치고 재시도한 경우) PK 충돌 에러를
+  // 던지지 않고 조용히 성공 처리한다 — "연결됨"이라는 목표 상태는 이미
+  // 달성되어 있으므로. RLS는 INSERT ... ON CONFLICT DO NOTHING을 순수
+  // INSERT 권한만으로 허용하므로 별도 UPDATE 정책이 필요 없다.
   const { error } = await supabase
     .from("toon_series_characters")
-    .insert({ series_id: seriesId, character_id: characterId });
+    .upsert(
+      { series_id: seriesId, character_id: characterId },
+      { onConflict: "series_id,character_id", ignoreDuplicates: true }
+    );
   if (error) throw error;
 }
 

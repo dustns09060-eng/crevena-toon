@@ -153,6 +153,24 @@ export async function getPrimaryReferenceSignedUrl(
   return signed.signedUrl;
 }
 
+/**
+ * 목록 카드용 대표 이미지: 승인된 Character Sheet가 있으면 그 이미지를,
+ * 없으면 기존 방식대로 대표 참조사진을 사용한다.
+ */
+export async function getCharacterCardSignedUrl(
+  supabase: SupabaseClient,
+  character: Pick<ToonCharacter, "id" | "character_sheet_url">,
+  expiresInSeconds = 3600
+): Promise<string | null> {
+  if (character.character_sheet_url) {
+    const { data: signed, error: signErr } = await supabase.storage
+      .from(CHARACTER_SHEETS_BUCKET)
+      .createSignedUrl(character.character_sheet_url, expiresInSeconds);
+    if (!signErr && signed?.signedUrl) return signed.signedUrl;
+  }
+  return getPrimaryReferenceSignedUrl(supabase, character.id, expiresInSeconds);
+}
+
 export async function getReferenceSignedUrl(
   supabase: SupabaseClient,
   storagePath: string,

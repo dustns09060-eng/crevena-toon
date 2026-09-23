@@ -61,7 +61,10 @@ export function mapStoryboardRawToDraft(
     narration: null,
     image_prompt: raw.cover.image_prompt,
     cover_title: raw.cover.cover_title,
-    cover_subtitle: raw.cover.cover_subtitle,
+    // raw.cover.cover_subtitle은 optional이라 undefined일 수 있다(Gemini가
+    // 이 선택적 필드를 아예 생략한 경우) — DB/Draft 타입은 `string | null`
+    // 이므로 undefined를 null로 정규화한다.
+    cover_subtitle: raw.cover.cover_subtitle ?? null,
   };
 
   const scenePanels: StoryboardDraftPanel[] = raw.panels.map((panel) => ({
@@ -75,7 +78,8 @@ export function mapStoryboardRawToDraft(
       character_id: resolveId(line.character),
       text: line.text,
     })),
-    narration: panel.narration,
+    // 같은 이유로 undefined -> null 정규화(narration도 optional).
+    narration: panel.narration ?? null,
     image_prompt: panel.image_prompt,
     cover_title: null,
     cover_subtitle: null,

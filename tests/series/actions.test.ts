@@ -26,6 +26,10 @@ function createSupabaseMock(config: MockConfig = {}) {
         record(`${table}.insert`, payload);
         return builder;
       },
+      upsert(payload: Record<string, unknown>, options?: unknown) {
+        record(`${table}.upsert`, { payload, options });
+        return builder;
+      },
       delete() {
         record(`${table}.delete`);
         return builder;
@@ -104,17 +108,30 @@ describe("linkCharacterToSeriesAction — 기존 캐릭터 재사용", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("기존 캐릭터를 시리즈에 연결하면 toon_series_characters에만 insert하고, 캐릭터/시트를 새로 만들지 않는다", async () => {
+  test("기존 캐릭터를 시리즈에 연결하면 toon_series_characters에만 upsert(ignoreDuplicates)하고, 캐릭터/시트를 새로 만들지 않는다", async () => {
     const { linkCharacterToSeriesAction } = await import("../../lib/series/actions");
 
     const result = await linkCharacterToSeriesAction("series-1", "char-a");
     expect(result.ok).toBe(true);
-    expect(currentSupabase._calls["toon_series_characters.insert"]).toEqual([
-      { series_id: "series-1", character_id: "char-a" },
+    expect(currentSupabase._calls["toon_series_characters.upsert"]).toEqual([
+      {
+        payload: { series_id: "series-1", character_id: "char-a" },
+        options: { onConflict: "series_id,character_id", ignoreDuplicates: true },
+      },
     ]);
     // 캐릭터 테이블/시트 테이블에는 어떤 insert도 없어야 한다(재생성 없음).
     expect(currentSupabase._calls["toon_characters.insert"]).toBeUndefined();
     expect(currentSupabase._calls["toon_character_sheets.insert"]).toBeUndefined();
+  });
+
+  test("이미 연결된 캐릭터를 다시 연결해도(재시도) 실패하지 않는다 — upsert ignoreDuplicates로 멱등 처리", async () => {
+    const { linkCharacterToSeriesAction } = await import("../../lib/series/actions");
+
+    const first = await linkCharacterToSeriesAction("series-1", "char-a");
+    const second = await linkCharacterToSeriesAction("series-1", "char-a");
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(currentSupabase._calls["toon_series_characters.upsert"]).toHaveLength(2);
   });
 });
 

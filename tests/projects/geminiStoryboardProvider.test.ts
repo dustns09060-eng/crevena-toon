@@ -1,6 +1,14 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+
+const generateContentMock = vi.fn();
+vi.mock("@google/genai", () => {
+  class GoogleGenAI {
+    models = { generateContent: generateContentMock };
+  }
+  return { GoogleGenAI };
+});
 
 // system instruction 문자열은 export되어 있지 않으므로(프로바이더 내부 상수),
 // 소스 파일 텍스트에서 핵심 규칙 문구가 실제로 존재하는지 확인한다 —
@@ -10,6 +18,158 @@ const source = fs.readFileSync(
   path.resolve(__dirname, "../../src/providers/geminiStoryboardProvider.ts"),
   "utf-8"
 );
+
+const VALID_STORYBOARD_JSON = JSON.stringify({
+  title: "제목",
+  summary: "요약",
+  cover: {
+    cover_title: "표지 제목",
+    scene_description: "표지 장면",
+    characters: ["CHARACTER_A"],
+    image_prompt: "cover prompt",
+  },
+  panels: [
+    {
+      panel_number: 1,
+      scene_description: "장면 1",
+      characters: ["CHARACTER_A"],
+      expressions: ["웃음"],
+      actions: ["행동"],
+      dialogue: [{ character: "CHARACTER_A", text: "안녕" }],
+      narration: null,
+      image_prompt: "scene prompt",
+    },
+  ],
+});
+
+function makeResponse(overrides: {
+  text?: string;
+  finishReason?: string;
+  parts?: { thought?: boolean; text?: string }[];
+} = {}) {
+  return {
+    text: overrides.text,
+    candidates: [
+      {
+        finishReason: overrides.finishReason ?? "STOP",
+        content: { parts: overrides.parts ?? [] },
+        safetyRatings: [],
+      },
+    ],
+    usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 10, totalTokenCount: 20 },
+  };
+}
+
+const baseCharacters = [
+  { id: "11111111-1111-4111-8111-111111111111", identifier: "CHARACTER_A", display_name: "엄마", role: "주인공", personality: null, speaking_style: null },
+];
+
+describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.text undefined) 처리", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.GEMINI_API_KEY = "test-key";
+  });
+
+  test("정상 response.text면 재시도 없이 1회만 호출한다", async () => {
+    generateContentMock.mockResolvedValueOnce(makeResponse({ text: VALID_STORYBOARD_JSON }));
+    const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+
+    const raw = await geminiStoryboardProvider.generateStoryboard({
+      topic: "소재",
+      panelCount: 2,
+      characters: baseCharacters,
+    });
+
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+    expect(raw.panels).toHaveLength(1);
+  });
+
+  test("첫 응답이 비어있고(STOP) 재시도에서 성공하면 최종적으로 성공한다", async () => {
+    generateContentMock
+      .mockResolvedValueOnce(makeResponse({ text: undefined, finishReason: "STOP", parts: [{ thought: true, text: "생각 중..." }] }))
+      .mockResolvedValueOnce(makeResponse({ text: VALID_STORYBOARD_JSON }));
+    const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+
+    const raw = await geminiStoryboardProvider.generateStoryboard({
+      topic: "소재",
+      panelCount: 2,
+      characters: baseCharacters,
+    });
+
+    expect(generateContentMock).toHaveBeenCalledTimes(2);
+    expect(raw.title).toBe("제목");
+  });
+
+  test("MAX_TOKENS로 비어있으면 재시도한다", async () => {
+    generateContentMock
+      .mockResolvedValueOnce(makeResponse({ text: undefined, finishReason: "MAX_TOKENS", parts: [{ thought: true }] }))
+      .mockResolvedValueOnce(makeResponse({ text: VALID_STORYBOARD_JSON }));
+    const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+
+    const raw = await geminiStoryboardProvider.generateStoryboard({
+      topic: "소재",
+      panelCount: 2,
+      characters: baseCharacters,
+    });
+
+    expect(generateContentMock).toHaveBeenCalledTimes(2);
+    expect(raw.panels).toHaveLength(1);
+  });
+
+  test("재시도까지 모두 비어있으면(최대 2회) 안전하게 실패한다", async () => {
+    generateContentMock
+      .mockResolvedValueOnce(makeResponse({ text: undefined, finishReason: "STOP" }))
+      .mockResolvedValueOnce(makeResponse({ text: undefined, finishReason: "STOP" }));
+    const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+
+    await expect(
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+    ).rejects.toThrow("비어");
+    expect(generateContentMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("SAFETY로 비어있으면 재시도하지 않고 즉시 안전하게 실패한다", async () => {
+    generateContentMock.mockResolvedValueOnce(makeResponse({ text: undefined, finishReason: "SAFETY" }));
+    const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+
+    await expect(
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+    ).rejects.toThrow(/안전 정책/);
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("RECITATION으로 비어있으면 재시도하지 않는다", async () => {
+    generateContentMock.mockResolvedValueOnce(makeResponse({ text: undefined, finishReason: "RECITATION" }));
+    const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+
+    await expect(
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+    ).rejects.toThrow();
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("malformed JSON은 빈 응답으로 취급하지 않고 재시도 없이 즉시 실패한다", async () => {
+    generateContentMock.mockResolvedValueOnce(makeResponse({ text: "이건 JSON이 아님{{{" }));
+    const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+
+    await expect(
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+    ).rejects.toThrow(/올바른 JSON/);
+    // text 자체는 있었으므로 "비어있음" 재시도 루프를 아예 타지 않는다 — 1회만 호출.
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("zod 스키마 검증 실패는 빈 응답 재시도로 우회되지 않고 즉시 실패한다", async () => {
+    const invalidJson = JSON.stringify({ title: "t", summary: "s" }); // cover/panels 누락(필수)
+    generateContentMock.mockResolvedValueOnce(makeResponse({ text: invalidJson }));
+    const { geminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+
+    await expect(
+      geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters })
+    ).rejects.toThrow();
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("geminiStoryboardProvider 프롬프트 규칙", () => {
   test("image_prompt에 한국어 대사/제목 글자를 그리라는 지시를 넣지 말라는 규칙이 있다", () => {

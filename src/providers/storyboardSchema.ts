@@ -51,7 +51,13 @@ export const StoryboardPanelRawSchema = z.object({
   expressions: z.array(z.string().trim().min(1).max(100)).max(5),
   actions: z.array(z.string().trim().min(1).max(100)).max(5),
   dialogue: z.array(StoryboardDialogueLineRawSchema).max(5),
-  narration: z.string().trim().max(200).nullable(),
+  // Gemini structured output 스키마에서 narration은 required 목록에
+  // 없다 — 즉 Gemini는 이 필드를 아예 생략(undefined)할 수도, null로
+  // 채울 수도 있다. .nullable()만 쓰면 null은 통과해도 undefined(키
+  // 자체가 없는 경우)는 "Invalid input: expected string, received
+  // undefined"로 막혀버린다 — 실제 Production 20장 요청에서 이 형태로
+  // 실패한 원인이었다. .optional()을 추가해 두 경우 모두 허용한다.
+  narration: z.string().trim().max(200).nullable().optional(),
   image_prompt: z.string().trim().min(1).max(500),
 });
 
@@ -62,7 +68,9 @@ export const StoryboardPanelRawSchema = z.object({
  */
 export const StoryboardCoverRawSchema = z.object({
   cover_title: z.string().trim().min(1).max(60),
-  cover_subtitle: z.string().trim().max(100).nullable(),
+  // narration과 동일한 이유로 optional 추가 — Gemini 스키마의 cover.required
+  // 목록에도 cover_subtitle이 없으므로 키 자체가 생략될 수 있다.
+  cover_subtitle: z.string().trim().max(100).nullable().optional(),
   scene_description: z.string().trim().min(1).max(300),
   characters: z.array(CharacterIdentifierSchema).min(1).max(MAX_CHARACTERS_PER_PANEL),
   image_prompt: z.string().trim().min(1).max(500),
@@ -81,6 +89,32 @@ export type StoryboardCoverRaw = z.infer<typeof StoryboardCoverRawSchema>;
 export type StoryboardValidationResult =
   | { valid: true }
   | { valid: false; errors: string[] };
+
+/**
+ * StoryboardRawSchema.safeParse 실패(zod issue)를 서버 로그 전용으로
+ * 한 줄씩 요약한다. Gemini의 raw response 전체를 로그에 남기지 않고,
+ * "어느 필드가(cover인지 몇 번째 scene인지) 어떤 이유로" 실패했는지만
+ * 담는다 — API Key/개인정보/원본 사진 등 민감정보는 애초에 이슈
+ * 객체에 들어있지 않으므로 노출 위험이 없다.
+ */
+export function describeStoryboardParseIssues(
+  issues: { path: PropertyKey[]; code: string; message: string }[]
+): string[] {
+  return issues.map((issue) => `${describeStoryboardIssuePath(issue.path)} [${issue.code}] ${issue.message}`);
+}
+
+function describeStoryboardIssuePath(path: PropertyKey[]): string {
+  const [root, second, ...rest] = path;
+  if (root === "cover") {
+    return ["cover", ...path.slice(1)].map(String).join(".");
+  }
+  if (root === "panels" && typeof second === "number") {
+    // raw.panels는 표지를 제외한 "본문 장면"만 담는 배열이라 index는
+    // 0부터 시작한다 — 사람이 보는 장면 번호는 index+1이다.
+    return [`panels[${second}](scene #${second + 1})`, ...rest].map(String).join(".");
+  }
+  return path.map(String).join(".") || "(root)";
+}
 
 /**
  * zod 스키마만으로 표현할 수 없는 교차 검증(정확한 panel 개수,

@@ -5,9 +5,77 @@ import type {
   StoryboardIdentifiedCharacter,
   StoryboardProvider,
 } from "./StoryboardProvider";
-import { StoryIdeasResponseSchema, StoryboardRawSchema, type StoryIdea, type StoryboardRaw } from "./storyboardSchema";
+import {
+  StoryIdeasResponseSchema,
+  StoryboardRawSchema,
+  describeStoryboardParseIssues,
+  type StoryIdea,
+  type StoryboardRaw,
+} from "./storyboardSchema";
 
 export const GEMINI_STORY_MODEL = process.env.GEMINI_STORY_MODEL ?? "gemini-3.6-flash";
+
+/**
+ * 응답이 비었을 때(response.text === undefined) 최초 시도를 포함해 최대
+ * 몇 번까지 시도할지. 2 = 최초 1회 + 재시도 1회.
+ */
+const MAX_EMPTY_RESPONSE_ATTEMPTS = 2;
+
+/**
+ * finishReason이 이 목록에 있으면 "일시적 문제가 아니라 명확한 정책적
+ * 이유로 응답이 비었다"는 뜻이므로 재시도해도 다시 실패할 게 거의
+ * 확실하다 — 재시도하지 않고 즉시 안전하게 실패 처리한다.
+ */
+const NON_RETRYABLE_EMPTY_RESPONSE_REASONS = new Set([
+  "SAFETY",
+  "RECITATION",
+  "LANGUAGE",
+  "BLOCKLIST",
+  "PROHIBITED_CONTENT",
+  "SPII",
+  "IMAGE_SAFETY",
+]);
+
+function isRetryableEmptyResponseReason(finishReason: string | undefined): boolean {
+  // finishReason이 없거나(FINISH_REASON_UNSPECIFIED 포함) STOP/MAX_TOKENS/OTHER처럼
+  // 정책과 무관한 이유라면 일시적 provider 문제로 보고 재시도를 허용한다.
+  if (!finishReason) return true;
+  return !NON_RETRYABLE_EMPTY_RESPONSE_REASONS.has(finishReason);
+}
+
+/**
+ * response.text가 비었을 때 원인 파악에 필요한 "비민감" 메타데이터만
+ * 뽑아 서버 로그용 객체로 만든다. 프롬프트/소재/사용자 개인정보/API
+ * key는 이 객체에 절대 포함하지 않는다 — content.parts의 실제 텍스트도
+ * 길이만 기록하고 내용은 남기지 않는다.
+ */
+function describeEmptyStoryboardResponse(
+  response: Awaited<ReturnType<GoogleGenAI["models"]["generateContent"]>>,
+  attempt: number
+) {
+  const candidate = response.candidates?.[0];
+  const parts = candidate?.content?.parts ?? [];
+  return {
+    attempt,
+    candidatesExist: Boolean(response.candidates),
+    candidatesLength: response.candidates?.length ?? 0,
+    finishReason: candidate?.finishReason,
+    finishMessage: candidate?.finishMessage,
+    hasSafetyRatings: Boolean(candidate?.safetyRatings && candidate.safetyRatings.length > 0),
+    contentPartsExist: parts.length > 0,
+    contentPartsCount: parts.length,
+    // 실제 텍스트/썸네일 내용은 남기지 않고, part의 "종류"와 길이만 기록한다.
+    partSummaries: parts.map((p) => ({
+      isThought: Boolean(p.thought),
+      hasTextField: typeof p.text === "string",
+      textLength: typeof p.text === "string" ? p.text.length : 0,
+      otherFieldNames: Object.keys(p).filter(
+        (k) => k !== "text" && k !== "thought" && (p as Record<string, unknown>)[k] != null
+      ),
+    })),
+    usageMetadata: response.usageMetadata,
+  };
+}
 
 const IDEAS_RESPONSE_SCHEMA = {
   type: "OBJECT",
@@ -213,7 +281,7 @@ ${input.topic}
 
 위 소재를 바탕으로 표지 1장 + 본문 ${sceneCount}장짜리 인스타툰 에피소드 스토리보드를 만들어주세요.`;
 
-    const response = await ai.models.generateContent({
+    const requestConfig = {
       model: GEMINI_STORY_MODEL,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
@@ -221,10 +289,41 @@ ${input.topic}
         responseMimeType: "application/json",
         responseSchema: STORYBOARD_RESPONSE_SCHEMA,
       },
-    });
+    };
 
-    const text = response.text;
-    if (!text) throw new Error("AI 스토리보드 응답이 비어 있습니다.");
+    // response.text가 비어 있는 경우에만 최대 1회 재시도한다. 실제
+    // 재현 결과 원인은 두 가지로 나뉜다:
+    // (1) finishReason이 STOP처럼 일시적/불명확한데 content.parts가
+    //     비어 있는 경우 — 재시도하면 성공하는 경우가 많았다.
+    // (2) finishReason이 PROHIBITED_CONTENT/SAFETY 등 콘텐츠 정책
+    //     판단으로 모델이 아예 응답을 만들지 않은 경우 — 재시도해도
+    //     같은 입력이면 다시 실패할 가능성이 높으므로 재시도하지 않고
+    //     즉시 안전하게 실패 처리한다(isRetryableEmptyResponseReason).
+    // JSON 파싱 실패나 zod 검증 실패는 이 재시도 대상이 아니다 —
+    // 아래에서 텍스트를 확보한 뒤 딱 한 번만 파싱/검증한다.
+    let text: string | undefined;
+    for (let attempt = 1; attempt <= MAX_EMPTY_RESPONSE_ATTEMPTS; attempt++) {
+      const response = await ai.models.generateContent(requestConfig);
+      if (response.text) {
+        text = response.text;
+        break;
+      }
+
+      const finishReason = response.candidates?.[0]?.finishReason;
+      console.error(
+        "[storyboard] Gemini 응답이 비어 있습니다(response.text 없음)",
+        describeEmptyStoryboardResponse(response, attempt)
+      );
+
+      if (!isRetryableEmptyResponseReason(finishReason)) {
+        throw new Error(
+          "AI가 안전 정책 등의 이유로 스토리보드를 생성하지 못했습니다. 소재를 조금 다르게 표현해 다시 시도해주세요."
+        );
+      }
+      // 재시도 가능한 이유(STOP/MAX_TOKENS/OTHER/불명)면 루프를 이어간다.
+      // 마지막 시도에서도 비어 있으면 루프 종료 후 아래에서 최종 실패 처리.
+    }
+    if (!text) throw new Error("AI 스토리보드 응답이 비어 있습니다. 잠시 후 다시 시도해주세요.");
 
     let json: unknown;
     try {
@@ -234,7 +333,14 @@ ${input.topic}
     }
     const parsed = StoryboardRawSchema.safeParse(json);
     if (!parsed.success) {
-      throw new Error("AI 스토리보드 응답이 유효하지 않습니다: " + parsed.error.issues.map((i) => i.message).join("; "));
+      // 원인 파악에 필요한 최소 정보(필드 위치/오류 코드/메시지)만 서버
+      // 로그에 남긴다 — Gemini raw response 전체는 절대 로그에 남기지
+      // 않는다(개인정보/원본 사진 프롬프트가 섞여 있을 수 있음).
+      console.error(
+        "[storyboard] Gemini 응답이 StoryboardRawSchema 검증에 실패했습니다",
+        describeStoryboardParseIssues(parsed.error.issues)
+      );
+      throw new Error("AI가 만든 스토리보드 형식이 올바르지 않아 사용할 수 없습니다. 다시 시도해주세요.");
     }
     return parsed.data;
   },

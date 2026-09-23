@@ -10,10 +10,14 @@ import DeleteCharacterButton from "../DeleteCharacterButton";
 
 export default async function CharacterDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ new?: string; photoError?: string }>;
 }) {
   const { id } = await params;
+  const { new: newFlag, photoError } = await searchParams;
+  const isNewCharacterFlow = newFlag === "1";
   const supabase = await createClient();
   const {
     data: { user },
@@ -40,6 +44,12 @@ export default async function CharacterDetailPage({
         <h1>{character.display_name}</h1>
       </div>
 
+      {photoError === "1" && (
+        <div className="banner banner-error">
+          일부 참조 사진 업로드에 실패했습니다. 캐릭터 정보는 저장되었으니 아래에서 사진을 다시 추가해주세요.
+        </div>
+      )}
+
       <div className="card">
         <h2 style={{ fontSize: 15, marginTop: 0 }}>참조 사진</h2>
         <ReferenceGallery characterId={id} initialReferences={referenceItems} />
@@ -56,6 +66,7 @@ export default async function CharacterDetailPage({
           characterId={id}
           initialApproved={approvedSheet}
           initialCandidate={latestCandidate}
+          isNewCharacterFlow={isNewCharacterFlow}
         />
       </div>
 

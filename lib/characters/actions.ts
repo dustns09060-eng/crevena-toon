@@ -56,7 +56,12 @@ export async function createCharacterAction(
 
   const character = await characterService.createCharacter(supabase, validation.data);
 
+  // 캐릭터 row는 이미 생성됐다 — 사진 업로드가 일부/전부 실패해도 이 폼으로
+  // 다시 돌아가 재제출하게 하면 동일 캐릭터가 중복 생성된다. 실패하더라도
+  // (재시도가 아니라) 방금 만든 캐릭터의 상세 페이지로 보내 거기서 사진을
+  // 이어서 추가하게 한다.
   let primarySet = false;
+  let photoUploadFailed = false;
   for (const file of files) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     try {
@@ -67,18 +72,21 @@ export async function createCharacterAction(
         isPrimary: !primarySet,
       });
       primarySet = true;
-    } catch (e) {
-      return {
-        ok: false,
-        message:
-          (e instanceof Error ? e.message : "사진 업로드 중 오류가 발생했습니다.") +
-          " (캐릭터 정보는 저장됐습니다 — 상세 페이지에서 사진을 다시 추가해주세요.)",
-      };
+    } catch {
+      photoUploadFailed = true;
+      break;
     }
   }
 
   revalidatePath("/toon/characters");
-  redirect(`/toon/characters/${character.id}`);
+  // `new=1`: 신규 캐릭터 생성 흐름임을 표시 — Character Sheet 승인까지
+  // 끝나야 메인 화면으로 자동 이동하는 로직이 이 신호로만 동작하고,
+  // 기존 캐릭터를 열람/수정할 때는 절대 자동 이동하지 않는다.
+  redirect(
+    photoUploadFailed
+      ? `/toon/characters/${character.id}?new=1&photoError=1`
+      : `/toon/characters/${character.id}?new=1`
+  );
 }
 
 export async function updateCharacterAction(

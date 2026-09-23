@@ -89,7 +89,10 @@ export async function linkCharacterToSeriesAction(seriesId: string, characterId:
   try {
     await linkCharacterToSeries(supabase, seriesId, characterId);
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "캐릭터 연결에 실패했습니다." };
+    // 사용자에게는 안전한 일반 메시지만 보여주고, 실제 원인(Supabase 오류
+    // 코드/메시지)은 서버 로그에만 남긴다 — DB 내부 정보 노출 방지.
+    console.error("[series] linkCharacterToSeriesAction 실패", { seriesId, characterId, error: e });
+    return { ok: false, message: "캐릭터 연결에 실패했습니다." };
   }
 
   revalidatePath(`/toon/series/${seriesId}`);
@@ -107,7 +110,8 @@ export async function unlinkCharacterFromSeriesAction(seriesId: string, characte
   try {
     await unlinkCharacterFromSeries(supabase, seriesId, characterId);
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "캐릭터 연결 해제에 실패했습니다." };
+    console.error("[series] unlinkCharacterFromSeriesAction 실패", { seriesId, characterId, error: e });
+    return { ok: false, message: "캐릭터 연결 해제에 실패했습니다." };
   }
 
   revalidatePath(`/toon/series/${seriesId}`);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   approveCharacterSheetAction,
   generateCharacterSheetAction,
@@ -11,11 +12,19 @@ export default function CharacterSheetSection({
   characterId,
   initialApproved,
   initialCandidate,
+  isNewCharacterFlow = false,
 }: {
   characterId: string;
   initialApproved: CharacterSheetView | null;
   initialCandidate: CharacterSheetView | null;
+  /**
+   * 신규 캐릭터 생성 흐름(방금 만든 캐릭터)에서만 true. 이 값이 true일
+   * 때만 승인 성공 시 메인 화면으로 자동 이동한다 — 기존 캐릭터를
+   * 열람/수정하는 화면(이 값이 false)에서는 절대 자동 이동하지 않는다.
+   */
+  isNewCharacterFlow?: boolean;
 }) {
+  const router = useRouter();
   const [approved, setApproved] = useState(initialApproved);
   const [candidate, setCandidate] = useState(initialCandidate);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -44,6 +53,12 @@ export default function CharacterSheetSection({
       if (result.ok) {
         setApproved({ ...candidate, status: "approved" });
         setCandidate(null);
+        // 신규 캐릭터 생성 흐름의 마지막 단계(승인)까지 성공했을 때만
+        // 메인 화면으로 이동한다. replace를 사용해 뒤로가기로 이 완료된
+        // 신규 생성 화면(?new=1)으로 돌아오지 않게 한다.
+        if (isNewCharacterFlow) {
+          router.replace("/toon/characters");
+        }
       } else {
         setErrorMessage(result.message ?? "승인에 실패했습니다.");
       }

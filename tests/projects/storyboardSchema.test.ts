@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   StoryboardRawSchema,
   StoryIdeasResponseSchema,
+  describeStoryboardParseIssues,
   validateStoryboardAgainstProject,
   type StoryboardCoverRaw,
   type StoryboardRaw,
@@ -123,6 +124,124 @@ describe("StoryboardRawSchema", () => {
     const board = makeStoryboard(5);
     board.panels[0].characters = ["character_a"];
     expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+  });
+});
+
+describe("StoryboardRawSchema — optional 필드 undefined 처리 (Production 20장 버그 재현)", () => {
+  // 실제 Production 오류: "AI 스토리보드 응답이 유효하지 않습니다: Invalid
+  // input: expected string, received undefined". Gemini structured output
+  // 스키마에서 narration/cover_subtitle은 required가 아니므로 Gemini가
+  // 키 자체를 생략할 수 있다(undefined) — 이때도 정상 처리되어야 한다.
+
+  test("panel.narration 키가 아예 없어도(undefined) 통과한다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    const panels = board.panels as Record<string, unknown>[];
+    delete panels[2].narration;
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(true);
+  });
+
+  test("cover.cover_subtitle 키가 아예 없어도(undefined) 통과한다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    delete (board.cover as Record<string, unknown>).cover_subtitle;
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(true);
+  });
+
+  test("narration이 명시적 null이어도 통과한다(기존 동작 유지)", () => {
+    const board = makeStoryboard(5);
+    board.panels[0].narration = null;
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(true);
+  });
+
+  test("20장(표지1+본문19) 요청에서 여러 scene의 narration이 생략되어도 통과한다", () => {
+    const board = makeStoryboard(19) as Record<string, unknown>;
+    const panels = board.panels as Record<string, unknown>[];
+    delete panels[0].narration;
+    delete panels[9].narration;
+    delete panels[18].narration;
+    delete (board.cover as Record<string, unknown>).cover_subtitle;
+    const result = StoryboardRawSchema.safeParse(board);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.panels).toHaveLength(19);
+    }
+  });
+
+  test("dialogue가 빈 배열인 scene(대사 없는 장면)도 통과한다", () => {
+    const board = makeStoryboard(5);
+    board.panels[0].dialogue = [];
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(true);
+  });
+
+  // 필수 필드는 여전히 필수여야 한다 — optional 처리가 검증을 느슨하게
+  // 만들어 malformed response까지 통과시키면 안 된다.
+  test("cover.cover_title(필수)이 없으면 여전히 거부된다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    delete (board.cover as Record<string, unknown>).cover_title;
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+  });
+
+  test("cover.scene_description(필수)이 없으면 여전히 거부된다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    delete (board.cover as Record<string, unknown>).scene_description;
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+  });
+
+  test("panel.scene_description(필수)이 없으면 여전히 거부된다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    const panels = board.panels as Record<string, unknown>[];
+    delete panels[0].scene_description;
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+  });
+
+  test("dialogue item의 text(필수)가 없으면 여전히 거부된다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    const panels = board.panels as Record<string, unknown>[];
+    panels[0].dialogue = [{ character: "CHARACTER_A" }];
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+  });
+
+  test("dialogue item의 character(필수)가 없으면 여전히 거부된다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    const panels = board.panels as Record<string, unknown>[];
+    panels[0].dialogue = [{ text: "안녕" }];
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+  });
+
+  test("panels 자체가 없는(malformed) 응답은 거부된다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    delete board.panels;
+    expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+  });
+
+  test("완전히 형태가 다른(malformed) 응답은 거부된다", () => {
+    expect(StoryboardRawSchema.safeParse({ hello: "world" }).success).toBe(false);
+    expect(StoryboardRawSchema.safeParse(null).success).toBe(false);
+    expect(StoryboardRawSchema.safeParse("not an object").success).toBe(false);
+  });
+});
+
+describe("describeStoryboardParseIssues — 서버 로그용 실패 위치 설명", () => {
+  test("cover 필드 실패는 'cover.<field>'로 표시된다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    delete (board.cover as Record<string, unknown>).cover_title;
+    const result = StoryboardRawSchema.safeParse(board);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const described = describeStoryboardParseIssues(result.error.issues);
+      expect(described.some((line) => line.startsWith("cover.cover_title"))).toBe(true);
+    }
+  });
+
+  test("scene 필드 실패는 'panels[n](scene #n+1).<field>'로 표시된다", () => {
+    const board = makeStoryboard(5) as Record<string, unknown>;
+    const panels = board.panels as Record<string, unknown>[];
+    delete panels[2].scene_description;
+    const result = StoryboardRawSchema.safeParse(board);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const described = describeStoryboardParseIssues(result.error.issues);
+      expect(described.some((line) => line.startsWith("panels[2](scene #3).scene_description"))).toBe(true);
+    }
   });
 });
 

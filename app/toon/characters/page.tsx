@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "../../../lib/supabase/server";
-import { getCharacters, getPrimaryReferenceSignedUrl } from "../../../lib/characters/service";
+import { getCharacters, getCharacterCardSignedUrl } from "../../../lib/characters/service";
 import { signOutAction } from "../../../lib/auth/actions";
 import DeleteCharacterButton from "./DeleteCharacterButton";
 
@@ -14,7 +14,7 @@ export default async function CharactersPage() {
 
   const characters = await getCharacters(supabase);
   const thumbnails = await Promise.all(
-    characters.map((c) => getPrimaryReferenceSignedUrl(supabase, c.id).catch(() => null))
+    characters.map((c) => getCharacterCardSignedUrl(supabase, c).catch(() => null))
   );
 
   return (

@@ -69,6 +69,21 @@ describe("mapStoryboardRawToDraft — CHARACTER_A/B/C identifier 매핑", () => 
     expect(draft.panels[1].expression).toBe("웃음, 안아준다");
   });
 
+  test("narration/cover_subtitle이 undefined(Gemini가 optional 필드를 생략한 경우)면 null로 정규화된다", () => {
+    // Production 20장 버그 재현: 이 값들은 optional이라 raw에 키 자체가
+    // 없을 수 있다. Draft 타입은 `string | null`이므로 undefined가 그대로
+    // DB에 넘어가면 안 되고 null로 정규화되어야 한다.
+    const rawWithoutOptionalFields = {
+      ...raw,
+      cover: { ...raw.cover, cover_subtitle: undefined },
+      panels: [{ ...raw.panels[0], narration: undefined }],
+    } as unknown as StoryboardRaw;
+
+    const draft = mapStoryboardRawToDraft(rawWithoutOptionalFields, identifierToId);
+    expect(draft.panels[0].cover_subtitle).toBeNull();
+    expect(draft.panels[1].narration).toBeNull();
+  });
+
   test("본문에 등록되지 않은 identifier(CHARACTER_Z)가 있으면 에러를 던진다", () => {
     const badRaw: StoryboardRaw = {
       ...raw,
