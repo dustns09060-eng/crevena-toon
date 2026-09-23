@@ -9,7 +9,7 @@ const PROJECT: ToonProject = {
   topic: null,
   category: null,
   tone: null,
-  panel_count: 2,
+  panel_count: 6,
   status: "confirmed",
   story_summary: "요약",
   created_at: "2026-01-01T00:00:00Z",
