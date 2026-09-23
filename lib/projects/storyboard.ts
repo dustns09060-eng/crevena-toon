@@ -166,6 +166,11 @@ function buildPanelRowsFromDraft(
   opts: { allowedCharacterIds: Set<string>; allowedLocationIds: Set<string>; coverState: ExistingCoverState }
 ): BuildPanelRowsResult {
   const draftCovers = draft.panels.filter((p) => p.panel_type === "cover");
+  // 022 — draft.temporaryLocations에 정의되지 않은 key를 참조하는 panel이
+  // 없는지 방어적으로 재검증한다(이론상 mapStoryboardRawToDraft를 거친
+  // draft는 항상 이 조건을 만족해야 하지만, 수동 편집 경로도 이 함수를
+  // 거치므로 여기서도 막는다).
+  const allowedTempKeys = new Set(draft.temporaryLocations.map((l) => l.location_key));
 
   if (opts.coverState === "had_cover" && draftCovers.length !== 1) {
     return { ok: false, message: "표지는 삭제하거나 여러 개로 만들 수 없습니다." };
@@ -195,6 +200,12 @@ function buildPanelRowsFromDraft(
     }
     if (panel.location_id && !opts.allowedLocationIds.has(panel.location_id)) {
       return { ok: false, message: "허용되지 않은 장소가 포함되어 있습니다." };
+    }
+    if (panel.temp_location_key && !allowedTempKeys.has(panel.temp_location_key)) {
+      return { ok: false, message: "정의되지 않은 임시 장소가 포함되어 있습니다." };
+    }
+    if (panel.location_id && panel.temp_location_key) {
+      return { ok: false, message: "한 컷에 저장된 장소와 임시 장소를 동시에 지정할 수 없습니다." };
     }
 
     const dialogue = panel.dialogue.map((d) => ({
@@ -230,10 +241,35 @@ function buildPanelRowsFromDraft(
       cover_subtitle: panel.cover_subtitle,
       location_id: panel.location_id,
       time_of_day: panel.time_of_day,
+      temp_location_key: panel.temp_location_key,
     });
   }
 
   return { ok: true, rows };
+}
+
+/**
+ * 022 — temp locations upsert + panel upsert + obsolete temp location
+ * cleanup을 하나의 Postgres transaction(RPC)으로 묶는다. AI 생성/검증은
+ * 이 함수를 호출하기 전에 이미 끝난 상태여야 한다(느린 외부 API 호출을
+ * DB transaction 안에 넣지 않는다) — 이 함수는 이미 검증된 결과만
+ * 받아서 DB에 반영한다.
+ */
+async function commitStoryboardPanels(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+  draft: StoryboardDraft,
+  rows: PanelRow[]
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { error } = await supabase.rpc("toon_save_storyboard_panels", {
+    p_project_id: projectId,
+    p_temp_locations: draft.temporaryLocations,
+    p_panel_rows: rows,
+  });
+  if (error) {
+    return { ok: false, message: "저장 중 오류가 발생했습니다: " + error.message };
+  }
+  return { ok: true };
 }
 
 export async function saveStoryboardAction(
@@ -268,12 +304,8 @@ export async function saveStoryboardAction(
   });
   if (!built.ok) return { ok: false, message: built.message };
 
-  const { error: upsertErr } = await supabase
-    .from("toon_panels")
-    .upsert(built.rows, { onConflict: "project_id,panel_number" });
-  if (upsertErr) {
-    return { ok: false, message: "저장 중 오류가 발생했습니다: " + upsertErr.message };
-  }
+  const committed = await commitStoryboardPanels(supabase, projectId, draft, built.rows);
+  if (!committed.ok) return committed;
 
   const updates: Record<string, unknown> = { story_summary: draft.summary };
   if (project.status === "draft") updates.status = "storyboard";
@@ -514,10 +546,8 @@ export async function regenerateStoryboardWithSettingsAction(
       if (addErr) return { ok: false, message: "등장인물 목록 갱신에 실패했습니다." };
     }
 
-    const { error: upsertErr } = await supabase
-      .from("toon_panels")
-      .upsert(built.rows, { onConflict: "project_id,panel_number" });
-    if (upsertErr) return { ok: false, message: "스토리보드 저장 중 오류가 발생했습니다: " + upsertErr.message };
+    const committed = await commitStoryboardPanels(supabase, projectId, draft, built.rows);
+    if (!committed.ok) return committed;
 
     if (project.status === "draft") {
       await supabase.from("toon_projects").update({ status: "storyboard" }).eq("id", projectId);

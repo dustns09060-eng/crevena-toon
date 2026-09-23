@@ -11,3 +11,6 @@ tsconfig.tsbuildinfo
 .mobile-test-user.json
 references/
 output/
+
+.vercel
+.env*

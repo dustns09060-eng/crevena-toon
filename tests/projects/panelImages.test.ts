@@ -19,6 +19,11 @@ vi.mock("../../lib/locations/service", () => ({
   getLocation: (...args: unknown[]) => getLocationMock(...args),
 }));
 
+const getProjectLocationMock = vi.fn();
+vi.mock("../../lib/projects/projectLocations", () => ({
+  getProjectLocation: (...args: unknown[]) => getProjectLocationMock(...args),
+}));
+
 const generateMock = vi.fn();
 vi.mock("../../src/providers/characterSheetProviderRegistry", () => ({
   getCharacterSheetProvider: () => ({ id: "gemini", generate: generateMock }),
@@ -348,6 +353,60 @@ describe("generatePanelImageAction", () => {
     const firstResult = await first;
     expect(firstResult.ok).toBe(true);
   });
+
+  describe("021/022 — Saved/Temporary Location 프롬프트 반영", () => {
+    test("panel.location_id(Saved)가 있으면 getLocation을 조회해 prompt에 반영하고 getProjectLocation은 호출하지 않는다", async () => {
+      const panelWithLocation = { ...OWNED_PANEL, location_id: "loc-a", project_location_id: null };
+      currentSupabase = createSupabaseMock({ panel: panelWithLocation, approvedSheetStoragePath: "user-a/char-a/sheet.png" });
+      getProjectPanelsMock.mockResolvedValue([panelWithLocation]);
+      const { generatePanelImageAction } = await import("../../lib/projects/panelImages");
+
+      const result = await generatePanelImageAction("panel-1");
+      expect(result.ok).toBe(true);
+      expect(getLocationMock).toHaveBeenCalledWith(currentSupabase, "loc-a");
+      expect(getProjectLocationMock).not.toHaveBeenCalled();
+      const promptSentToProvider = generateMock.mock.calls[0][0] as string;
+      expect(promptSentToProvider).toContain("우리 집 거실");
+    });
+
+    test("panel.project_location_id(Temporary)가 있으면 getProjectLocation을 조회해 prompt에 반영하고 getLocation은 호출하지 않는다", async () => {
+      getProjectLocationMock.mockResolvedValue({
+        id: "ploc-1",
+        project_id: "proj-1",
+        location_key: "TEMP_A",
+        display_name: "아쿠아리움 대형 수조",
+        visual_prompt: "거대한 원형 수조와 파란 조명",
+        wall_and_floor: null,
+        fixed_furniture: null,
+        window_style: null,
+        recurring_props: null,
+        distinctive_features: null,
+      });
+      const panelWithTemp = { ...OWNED_PANEL, location_id: null, project_location_id: "ploc-1" };
+      currentSupabase = createSupabaseMock({ panel: panelWithTemp, approvedSheetStoragePath: "user-a/char-a/sheet.png" });
+      getProjectPanelsMock.mockResolvedValue([panelWithTemp]);
+      const { generatePanelImageAction } = await import("../../lib/projects/panelImages");
+
+      const result = await generatePanelImageAction("panel-1");
+      expect(result.ok).toBe(true);
+      expect(getProjectLocationMock).toHaveBeenCalledWith(currentSupabase, "ploc-1");
+      expect(getLocationMock).not.toHaveBeenCalled();
+      const promptSentToProvider = generateMock.mock.calls[0][0] as string;
+      expect(promptSentToProvider).toContain("아쿠아리움 대형 수조");
+    });
+
+    test("location_id/project_location_id가 둘 다 없으면(레거시) 둘 다 조회하지 않는다", async () => {
+      const legacyPanel = { ...OWNED_PANEL, location_id: null, project_location_id: null };
+      currentSupabase = createSupabaseMock({ panel: legacyPanel, approvedSheetStoragePath: "user-a/char-a/sheet.png" });
+      getProjectPanelsMock.mockResolvedValue([legacyPanel]);
+      const { generatePanelImageAction } = await import("../../lib/projects/panelImages");
+
+      const result = await generatePanelImageAction("panel-1");
+      expect(result.ok).toBe(true);
+      expect(getLocationMock).not.toHaveBeenCalled();
+      expect(getProjectLocationMock).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("approvePanelImageAction", () => {
@@ -419,7 +478,11 @@ describe("updatePanelLocationAction — 021, 기존(확정된) panel에 Location
 
     const result = await updatePanelLocationAction("panel-1", { location_id: "loc-a", time_of_day: "NIGHT" });
     expect(result.ok).toBe(true);
-    expect(currentSupabase._calls["toon_panels.update"]).toEqual([{ location_id: "loc-a", time_of_day: "NIGHT" }]);
+    // 022 — 이 액션은 Saved Location만 수동 지정하므로, 항상
+    // project_location_id(Temporary)를 null로 정리해 상호배타성을 지킨다.
+    expect(currentSupabase._calls["toon_panels.update"]).toEqual([
+      { location_id: "loc-a", time_of_day: "NIGHT", project_location_id: null },
+    ]);
     expect(currentSupabase._calls["toon_panel_images.insert"]).toBeUndefined();
     expect(currentSupabase._calls["toon_characters.update"]).toBeUndefined();
   });
@@ -429,7 +492,9 @@ describe("updatePanelLocationAction — 021, 기존(확정된) panel에 Location
 
     const result = await updatePanelLocationAction("panel-1", { location_id: null, time_of_day: null });
     expect(result.ok).toBe(true);
-    expect(currentSupabase._calls["toon_panels.update"]).toEqual([{ location_id: null, time_of_day: null }]);
+    expect(currentSupabase._calls["toon_panels.update"]).toEqual([
+      { location_id: null, time_of_day: null, project_location_id: null },
+    ]);
     // location_id가 null이면 getLocation 조회 자체를 하지 않는다.
     expect(getLocationMock).not.toHaveBeenCalled();
   });

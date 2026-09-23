@@ -4,6 +4,7 @@ import { getProject, getProjectCharacters, getProjectPanels } from "../../../../
 import { checkProjectGenerationReadiness, getPanelImagesSummary } from "../../../../lib/projects/panelImages";
 import { getCharacters } from "../../../../lib/characters/service";
 import { getSeriesLocations } from "../../../../lib/series/service";
+import { getProjectLocations } from "../../../../lib/projects/projectLocations";
 import StoryboardEditor from "./StoryboardEditor";
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -24,6 +25,9 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   // 장소 전체가 아니라, Storyboard AI가 실제로 고를 수 있었던 목록과
   // 동일한 범위). 독립 프로젝트(series_id=null)는 항상 빈 배열.
   const seriesLocations = project.series_id ? await getSeriesLocations(supabase, project.series_id) : [];
+  // 022 — 이 프로젝트(에피소드)가 지금까지 정의한 Temporary Location.
+  // 사용자는 직접 만들지 않고 Storyboard AI가 저장 시점에 채운다.
+  const projectLocations = await getProjectLocations(supabase, id);
 
   let panelImagesData = null;
   if (project.status === "confirmed" && panels.length > 0) {
@@ -51,6 +55,17 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         characters={characters}
         allCharacters={allCharacters.map((c) => ({ id: c.id, display_name: c.display_name, role: c.role ?? "" }))}
         allLocations={seriesLocations.map((l) => ({ id: l.id, display_name: l.display_name }))}
+        projectLocations={projectLocations.map((l) => ({
+          id: l.id,
+          location_key: l.location_key,
+          display_name: l.display_name,
+          visual_prompt: l.visual_prompt,
+          wall_and_floor: l.wall_and_floor,
+          fixed_furniture: l.fixed_furniture,
+          window_style: l.window_style,
+          recurring_props: l.recurring_props,
+          distinctive_features: l.distinctive_features,
+        }))}
         initialPanels={panels}
         panelImagesData={panelImagesData}
       />

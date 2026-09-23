@@ -38,6 +38,7 @@ function makePanel(overrides: Partial<ToonPanel>): ToonPanel {
     generation_version: 1,
     location_id: null,
     time_of_day: null,
+    project_location_id: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,

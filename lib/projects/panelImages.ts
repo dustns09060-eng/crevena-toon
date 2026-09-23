@@ -12,6 +12,7 @@ import { getToonStyle } from "../../src/providers/characterSheetStyle";
 import { DEFAULT_PANEL_ASPECT_RATIO } from "../../src/providers/panelImageConfig";
 import { MAX_CHARACTERS_PER_PANEL } from "../../src/providers/projectPanelCountConfig";
 import { getLocation } from "../locations/service";
+import { getProjectLocation } from "./projectLocations";
 import type { ToonCharacter, ToonPanel, ToonProject, ToonTimeOfDay } from "../../src/db/types";
 
 const REFERENCES_SHEET_BUCKET = "toon-character-sheets";
@@ -178,9 +179,12 @@ export async function generatePanelImageAction(panelId: string): Promise<Generat
       promptCharacters.push({ display_name: c.display_name, characterBible: toBibleForPrompt(c) });
     }
 
-    // 021 — panel.location_id가 있으면 그 Location Bible을 조회해 프롬프트에
-    // 전달한다. 없으면(레거시/장소 미설정) location을 넘기지 않는다 —
-    // buildPanelImagePrompt는 이 경우 LOCATION 블록을 아예 생략한다.
+    // 021/022 — panel.location_id(Saved) 또는 panel.project_location_id
+    // (Temporary, 022) 중 있는 쪽의 Location Bible을 조회해 프롬프트에
+    // 전달한다. 둘 다 없으면(레거시/장소 미설정) location을 넘기지 않는다
+    // — buildPanelImagePrompt는 이 경우 LOCATION 블록을 아예 생략한다.
+    // DB CHECK(toon_panels_location_exclusive)가 둘 다 채워지는 것을
+    // 막으므로 여기서는 항상 최대 하나만 값을 가진다.
     let locationContext = null;
     if (panel.location_id) {
       const location = await getLocation(supabase, panel.location_id);
@@ -198,6 +202,19 @@ export async function generatePanelImageAction(panelId: string): Promise<Generat
       // location이 삭제되어 조회되지 않는 경우(on delete set null이 아직
       // 반영 안 됐거나 타이밍 이슈)는 조용히 무시하고 location 없이
       // 진행한다 — 생성 자체를 막을 이유는 없다(장소는 부가 정보).
+    } else if (panel.project_location_id) {
+      const projectLocation = await getProjectLocation(supabase, panel.project_location_id);
+      if (projectLocation) {
+        locationContext = {
+          display_name: projectLocation.display_name,
+          visual_prompt: projectLocation.visual_prompt,
+          wall_and_floor: projectLocation.wall_and_floor,
+          fixed_furniture: projectLocation.fixed_furniture,
+          window_style: projectLocation.window_style,
+          recurring_props: projectLocation.recurring_props,
+          distinctive_features: projectLocation.distinctive_features,
+        };
+      }
     }
 
     const style = getToonStyle();
@@ -397,9 +414,13 @@ export async function updatePanelLocationAction(
     if (!location) return { ok: false, message: "장소를 찾을 수 없거나 접근 권한이 없습니다." };
   }
 
+  // 022 — 이 액션은 항상 Saved Location(또는 "장소 없음")만 수동으로
+  // 지정한다. Temporary Location은 사용자가 직접 관리하지 않으므로,
+  // 여기서 Saved 쪽을 바꾸면 그 컷의 project_location_id는 항상
+  // null로 정리한다(DB CHECK toon_panels_location_exclusive와도 일치).
   const { error } = await supabase
     .from("toon_panels")
-    .update({ location_id: input.location_id, time_of_day: input.time_of_day })
+    .update({ location_id: input.location_id, time_of_day: input.time_of_day, project_location_id: null })
     .eq("id", panelId);
   if (error) return { ok: false, message: "장소/시간대 저장에 실패했습니다." };
 

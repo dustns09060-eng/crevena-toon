@@ -372,3 +372,40 @@ describe("buildPanelImagePrompt — Location Bible(021)", () => {
     expect(prompt).toMatch(/TIME OF DAY: This scene takes place at night/);
   });
 });
+
+describe("buildPanelImagePrompt — 실제 이미지 테스트에서 발견된 문제 보강(022)", () => {
+  function basicInput(overrides: Partial<Parameters<typeof buildPanelImagePrompt>[0]> = {}) {
+    return {
+      sceneDescription: "소파로 뛰어들어 털썩 누웠다",
+      expression: "지침",
+      imagePrompt: "medium shot",
+      characters: [{ display_name: "엄마", characterBible: momBible }],
+      style: "warm webtoon style",
+      aspectRatio: "1:1",
+      ...overrides,
+    };
+  }
+
+  test("SCENE completed-state 규칙이 항상 포함된다", () => {
+    const prompt = buildPanelImagePrompt(basicInput());
+    expect(prompt).toMatch(/depict that final completed state, not an intermediate moment/);
+  });
+
+  test("전자기기는 브랜드 없이/빈 화면으로 그리라는 지시와 시계 바늘 예외가 포함된다", () => {
+    const prompt = buildPanelImagePrompt(basicInput());
+    expect(prompt).toMatch(/generic and unbranded/);
+    expect(prompt).toMatch(/blank, off, or an abstract glow/);
+    expect(prompt).toMatch(/clock hands.*are not considered readable text/s);
+  });
+
+  test("강화된 negative constraints — 브랜드 로고/Apple 로고/Zzz류 comic symbol/불필요한 숫자 금지가 포함된다", () => {
+    const prompt = buildPanelImagePrompt(basicInput());
+    expect(prompt).toMatch(/no brand logos/);
+    expect(prompt).toMatch(/no trademarks/);
+    expect(prompt).toMatch(/no Apple logo/);
+    expect(prompt).toMatch(/no device branding/);
+    expect(prompt).toMatch(/no sound-effect lettering/);
+    expect(prompt).toMatch(/no comic symbols containing letters/);
+    expect(prompt).toMatch(/no readable numbers unless explicitly required by the scene/);
+  });
+});

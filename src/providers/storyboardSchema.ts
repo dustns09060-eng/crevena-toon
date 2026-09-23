@@ -40,12 +40,46 @@ const CharacterIdentifierSchema = z
  * 없는데 AI가 임의로 LOCATION_A를 반환한 경우"는 이 zod 스키마
  * 단계에서는 통과하지만 validateStoryboardAgainstProject의 교차
  * 검증에서 명시적으로 거부한다(조용히 null로 매핑하지 않는다).
+ *
+ * 022 — Temporary Location(이 프로젝트 안에서만 유효, AI가 즉석에서
+ * 정의)은 TEMP_로 시작하는 별도 namespace를 쓴다. LOCATION_[A-Z]와
+ * 정규식이 겹치지 않으므로 두 종류를 문자열만 보고도 항상 구분할 수
+ * 있다. panel/cover의 location 필드는 둘 중 하나를 자유롭게 쓸 수
+ * 있어야 하므로 이 스키마에서는 두 패턴을 모두 허용하고, "이 값이
+ * 실제로 정의되어 있는지"는 validateStoryboardAgainstProject가
+ * 판단한다(LOCATION_*는 allowedLocationIdentifiers, TEMP_*는 같은
+ * 응답의 temporary_locations 배열 기준).
  */
-const LOCATION_IDENTIFIER_REGEX = /^LOCATION_[A-Z]$/;
+const TEMP_LOCATION_IDENTIFIER_REGEX = /^TEMP_[A-Z0-9_]+$/;
+const LOCATION_OR_TEMP_IDENTIFIER_REGEX = /^(LOCATION_[A-Z]|TEMP_[A-Z0-9_]+)$/;
 const LocationIdentifierSchema = z
   .string()
   .trim()
-  .regex(LOCATION_IDENTIFIER_REGEX, "장소는 반드시 LOCATION_A, LOCATION_B 같은 식별자여야 합니다.");
+  .regex(
+    LOCATION_OR_TEMP_IDENTIFIER_REGEX,
+    "장소는 반드시 LOCATION_A 같은 저장된 장소 식별자이거나 TEMP_A 같은 임시 장소 식별자여야 합니다."
+  );
+
+/**
+ * 022 — 이번 Storyboard 응답 안에서 AI가 즉석으로 정의하는 Temporary
+ * Location. location_key는 이 응답 안에서만 유효한 식별자이고(영구
+ * DB id 아님), display_name/visual_prompt만 필수다(Saved Location의
+ * "고급 설정" 필드와 동일하게 나머지는 optional).
+ */
+export const StoryboardTemporaryLocationRawSchema = z.object({
+  location_key: z
+    .string()
+    .trim()
+    .regex(TEMP_LOCATION_IDENTIFIER_REGEX, "임시 장소 식별자는 반드시 TEMP_A 같은 형태여야 합니다."),
+  display_name: z.string().trim().min(1).max(60),
+  visual_prompt: z.string().trim().min(1).max(500),
+  wall_and_floor: z.string().trim().max(300).nullable().optional(),
+  fixed_furniture: z.string().trim().max(300).nullable().optional(),
+  window_style: z.string().trim().max(300).nullable().optional(),
+  recurring_props: z.string().trim().max(300).nullable().optional(),
+  distinctive_features: z.string().trim().max(300).nullable().optional(),
+});
+export type StoryboardTemporaryLocationRaw = z.infer<typeof StoryboardTemporaryLocationRawSchema>;
 
 /** 021 — 컷의 시간대. Location Set 유무와 무관하게 항상 선택적으로 허용한다. */
 export const TIME_OF_DAY_VALUES = ["MORNING", "DAY", "EVENING", "NIGHT", "LATE_NIGHT"] as const;
@@ -110,6 +144,10 @@ export const StoryboardRawSchema = z.object({
   summary: z.string().trim().min(1).max(300),
   cover: StoryboardCoverRawSchema,
   panels: z.array(StoryboardPanelRawSchema).min(PROJECT_SCENE_COUNT_MIN_WITH_COVER).max(PROJECT_SCENE_COUNT_MAX_WITH_COVER),
+  // 022 — Gemini 구조화 출력 스키마의 required 목록에 없으므로(선택
+  // 필드) 이 에피소드에 임시 장소가 전혀 필요 없으면 아예 생략될 수
+  // 있다. narration/time_of_day와 동일한 이유로 optional.
+  temporary_locations: z.array(StoryboardTemporaryLocationRawSchema).max(10).optional(),
 });
 export type StoryboardRaw = z.infer<typeof StoryboardRawSchema>;
 export type StoryboardPanelRaw = z.infer<typeof StoryboardPanelRawSchema>;
@@ -178,8 +216,28 @@ export function validateStoryboardAgainstProject(
   const allowed = new Set(opts.allowedIdentifiers);
   const allowedLocations = new Set(opts.allowedLocationIdentifiers);
 
+  // 022 — 이번 응답이 직접 정의한 Temporary Location의 key 집합.
+  // LOCATION_*(허용목록 대조)와 달리 TEMP_*는 "이 응답 안에 정의되어
+  // 있는지"만 확인한다 — 프로젝트 허용목록이라는 개념 자체가 없다
+  // (매 생성마다 AI가 새로 즉석 정의하는 값이기 때문).
+  const tempLocations = raw.temporary_locations ?? [];
+  const tempKeys = new Set<string>();
+  for (const loc of tempLocations) {
+    if (tempKeys.has(loc.location_key)) {
+      errors.push(`temporary_locations: 임시 장소 식별자 "${loc.location_key}"가 중복 정의됐습니다.`);
+      continue;
+    }
+    tempKeys.add(loc.location_key);
+  }
+
   function checkLocation(location: string | undefined, where: string) {
     if (location === undefined) return; // location 필드 생략은 항상 정상.
+    if (location.startsWith("TEMP_")) {
+      if (!tempKeys.has(location)) {
+        errors.push(`${where}: temporary_locations에 정의되지 않은 임시 장소 식별자 "${location}"가 사용됐습니다.`);
+      }
+      return;
+    }
     if (allowedLocations.size === 0) {
       errors.push(`${where}: 이 시리즈에는 등록된 장소가 없는데 장소 식별자 "${location}"가 반환됐습니다.`);
       return;

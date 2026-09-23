@@ -67,6 +67,17 @@ function createSupabaseMock(config: { storageFiles?: Record<string, { name: stri
   return {
     _calls: calls,
     auth: { getUser: async () => ({ data: { user: OWNED_USER } }) },
+    // 022 — saveStoryboardAction/regenerateStoryboardWithSettingsAction은
+    // 이제 toon_panels.upsert()를 직접 부르지 않고 toon_save_storyboard_panels
+    // RPC로 커밋한다. 기존 테스트들이 "toon_panels.upsert 호출 여부/내용"으로
+    // 커밋 성공을 검증하므로, 이 mock도 같은 키에 기록해 기존 단언을 그대로 재사용한다.
+    rpc: async (fnName: string, args: Record<string, unknown>): Promise<{ error: { message: string } | null }> => {
+      record(`rpc.${fnName}`, args);
+      if (fnName === "toon_save_storyboard_panels") {
+        record("toon_panels.upsert", { rows: args.p_panel_rows, opts: { onConflict: "project_id,panel_number" } });
+      }
+      return { error: null };
+    },
     storage: {
       from(bucket: string) {
         return {
@@ -206,6 +217,7 @@ describe("saveStoryboardAction", () => {
   const validDraft = {
     title: "제목",
     summary: "요약",
+    temporaryLocations: [],
     panels: [
       {
         panel_number: 1,
@@ -220,6 +232,7 @@ describe("saveStoryboardAction", () => {
         cover_subtitle: null,
         location_id: null,
         time_of_day: null,
+        temp_location_key: null,
       },
     ],
   };
@@ -350,6 +363,75 @@ describe("saveStoryboardAction", () => {
     const upsertCall = currentSupabase._calls["toon_panels.upsert"][0] as { rows: Record<string, unknown>[] };
     expect(upsertCall.rows[0].panel_type).toBe("cover");
     expect(upsertCall.rows[0].cover_title).toBe("표지 제목");
+  });
+
+  describe("022 — Temporary Location 저장(toon_save_storyboard_panels RPC)", () => {
+    test("정의되지 않은 temp_location_key를 참조하는 panel은 거부되고 RPC를 호출하지 않는다", async () => {
+      getProjectMock.mockResolvedValue({ ...OWNED_PROJECT, panel_count: 1 });
+      const badDraft = {
+        ...validDraft,
+        temporaryLocations: [],
+        panels: [{ ...validDraft.panels[0], temp_location_key: "TEMP_A" }],
+      };
+      const { saveStoryboardAction } = await import("../../lib/projects/storyboard");
+
+      const result = await saveStoryboardAction("proj-1", badDraft);
+      expect(result.ok).toBe(false);
+      expect(currentSupabase._calls["rpc.toon_save_storyboard_panels"]).toBeUndefined();
+    });
+
+    test("location_id와 temp_location_key를 동시에 지정하면 거부된다(상호배타)", async () => {
+      getProjectMock.mockResolvedValue({ ...OWNED_PROJECT, panel_count: 1 });
+      const badDraft = {
+        ...validDraft,
+        temporaryLocations: [{ location_key: "TEMP_A", display_name: "카페", visual_prompt: "일반 카페 내부" }],
+        panels: [{ ...validDraft.panels[0], location_id: "loc-x", temp_location_key: "TEMP_A" }],
+      };
+      const { saveStoryboardAction } = await import("../../lib/projects/storyboard");
+
+      const result = await saveStoryboardAction("proj-1", badDraft);
+      expect(result.ok).toBe(false);
+      expect(currentSupabase._calls["rpc.toon_save_storyboard_panels"]).toBeUndefined();
+    });
+
+    test("정의된 temp_location_key를 참조하는 panel은 RPC에 temporaryLocations 정의와 함께 전달된다", async () => {
+      getProjectMock.mockResolvedValue({ ...OWNED_PROJECT, panel_count: 1 });
+      const draft = {
+        ...validDraft,
+        temporaryLocations: [{ location_key: "TEMP_A", display_name: "카페", visual_prompt: "일반 카페 내부" }],
+        panels: [{ ...validDraft.panels[0], temp_location_key: "TEMP_A" }],
+      };
+      const { saveStoryboardAction } = await import("../../lib/projects/storyboard");
+
+      const result = await saveStoryboardAction("proj-1", draft);
+      expect(result.ok).toBe(true);
+      const rpcCalls = currentSupabase._calls["rpc.toon_save_storyboard_panels"] as Record<string, unknown>[];
+      expect(rpcCalls).toHaveLength(1);
+      expect(rpcCalls[0].p_temp_locations).toEqual(draft.temporaryLocations);
+      const panelRows = rpcCalls[0].p_panel_rows as Record<string, unknown>[];
+      expect(panelRows[0].temp_location_key).toBe("TEMP_A");
+      expect(panelRows[0].location_id).toBeNull();
+    });
+
+    test("RPC가 오류를 반환하면 저장 실패로 처리되고 프로젝트 상태는 갱신되지 않는다", async () => {
+      getProjectMock.mockResolvedValue({ ...OWNED_PROJECT, panel_count: 1, status: "draft" });
+      currentSupabase.rpc = async () => ({ error: { message: "db down" } });
+      const { saveStoryboardAction } = await import("../../lib/projects/storyboard");
+
+      const result = await saveStoryboardAction("proj-1", validDraft);
+      expect(result.ok).toBe(false);
+      expect(currentSupabase._calls["toon_projects.update"]).toBeUndefined();
+    });
+
+    test("레거시 프로젝트(temporaryLocations 빈 배열, temp_location_key 전부 null)도 정상 저장된다", async () => {
+      getProjectMock.mockResolvedValue({ ...OWNED_PROJECT, panel_count: 1 });
+      const { saveStoryboardAction } = await import("../../lib/projects/storyboard");
+
+      const result = await saveStoryboardAction("proj-1", validDraft);
+      expect(result.ok).toBe(true);
+      const rpcCalls = currentSupabase._calls["rpc.toon_save_storyboard_panels"] as Record<string, unknown>[];
+      expect(rpcCalls[0].p_temp_locations).toEqual([]);
+    });
   });
 });
 

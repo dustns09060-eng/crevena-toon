@@ -203,6 +203,41 @@ function buildNightTimeClause(): string {
   ].join("\n");
 }
 
+/**
+ * 실제 이미지 테스트에서 노트북 화면에 "DEADLINE" 글자, Apple 로고가
+ * 그려지는 문제가 발견되어 추가한 절. imageNegativeConstraints의 짧은
+ * 금지 목록만으로는 "그럼 화면/전자기기를 어떻게 그려야 하는지"에 대한
+ * 긍정적 지시가 없어 모델이 스스로 그럴듯한 텍스트/로고로 채워 넣는
+ * 경향이 있었다 — 이 절은 "빈 화면/추상 UI + 브랜드 없는 전자기기"라는
+ * 대안을 명시적으로 제시한다. 단, 시계처럼 시간이 장면에 중요한 경우는
+ * 바늘 표현을 예외로 허용한다(글자/숫자가 아니라 바늘 위치이므로
+ * "no readable text/numbers" 제약과 충돌하지 않는다).
+ */
+function buildElectronicsAndClockClause(): string {
+  return [
+    "ELECTRONICS & CLOCKS:",
+    "Any laptop, phone, tablet, TV, or other screen must be generic and unbranded — no manufacturer logos, " +
+      "no on-screen readable text, icons, or UI text unless the scene explicitly requires specific screen " +
+      "content to make sense. When in doubt, render the screen as blank, off, or an abstract glow/soft light " +
+      "instead of inventing text or a logo.",
+    "Exception: if the scene depends on a character checking the time, an analog wall clock or watch with " +
+      "clock hands showing approximately the correct time is allowed and encouraged — clock hands are not " +
+      "considered readable text.",
+  ].join("\n");
+}
+
+/**
+ * SCENE completed-state 규칙 — 실제 테스트에서 "소파로 뛰어들어 털썩
+ * 누웠다"처럼 여러 동작이 이어지는 장면 묘사가, 최종 상태(누움)가 아닌
+ * 중간 동작(공중에서 점프)으로 그려지는 문제가 발견됐다. SCENE이
+ * 여러 동작을 서술할 때는 마지막 완결 상태를 그리라고 명시한다.
+ */
+const SCENE_COMPLETED_STATE_CLAUSE =
+  "If SCENE describes a sequence of actions ending in a completed state (e.g. \"jumps onto the sofa and " +
+  "flops down\" → lying down; \"sits down and opens the laptop\" → seated with laptop open), depict that " +
+  "final completed state, not an intermediate moment (e.g. mid-air, mid-motion) — unless SCENE or COMPOSITION " +
+  "explicitly asks for the intermediate moment itself.";
+
 export function buildPanelImagePrompt(input: BuildPanelImagePromptInput): string {
   const lines: string[] = [
     `Generate a single Instagram daily-life comic panel illustration, aspect ratio ${input.aspectRatio}.`,
@@ -252,11 +287,14 @@ export function buildPanelImagePrompt(input: BuildPanelImagePromptInput): string
     "SCENE FACTS ARE AUTHORITATIVE. Composition instructions must never contradict the scene's location, " +
       "character actions, major objects, or time of day — if COMPOSITION conflicts with SCENE on any of these, " +
       "follow SCENE and adjust the composition to match it, not the other way around.",
+    SCENE_COMPLETED_STATE_CLAUSE,
     // 6. EXPRESSION / SECONDARY DETAILS.
     `EXPRESSION/ACTION (secondary detail): ${input.expression}`,
     "",
     "Keep some naturally uncluttered negative space near the upper portion of the composition, without drawing " +
       "any graphic UI element there.",
+    "",
+    buildElectronicsAndClockClause(),
     "",
     buildNegativeImageConstraintsClause()
   );

@@ -165,10 +165,16 @@ export interface ToonPanel {
   image_url: string | null;
   raw_image_url: string | null;
   generation_version: number;
-  /** 021 마이그레이션 — 이 컷이 어느 Location Bible을 쓰는지. 레거시 panel은 null. */
+  /** 021 마이그레이션 — 이 컷이 어느 Saved Location(toon_locations)을 쓰는지. 레거시 panel은 null. */
   location_id: Uuid | null;
   /** 021 마이그레이션 — 이 컷의 시간대. 레거시 panel은 null. */
   time_of_day: ToonTimeOfDay | null;
+  /**
+   * 022 마이그레이션 — 이 컷이 어느 Temporary Location(toon_project_locations,
+   * 이 프로젝트 안에서만 유효)을 쓰는지. location_id와 상호배타적이다
+   * (DB CHECK toon_panels_location_exclusive로 강제).
+   */
+  project_location_id: Uuid | null;
   created_at: IsoTimestamp;
   updated_at: IsoTimestamp;
 }
@@ -237,6 +243,29 @@ export interface ToonLocation {
 export interface ToonSeriesLocation {
   series_id: Uuid;
   location_id: Uuid;
+  created_at: IsoTimestamp;
+}
+
+/**
+ * 022 마이그레이션 — Temporary/Story Location. toon_locations(Saved
+ * Location)와 달리 이 프로젝트(에피소드) 안에서만 유효하며, Storyboard
+ * AI가 소재를 보고 즉석에서 정의한다(놀이동산/편의점처럼 이 화에만
+ * 잠깐 나오는 장소). project 삭제 시 함께 삭제된다(on delete cascade).
+ * user_id 컬럼을 두지 않고 project_id를 통해서만 소유권을 판단한다
+ * (toon_project_characters와 동일한 패턴).
+ */
+export interface ToonProjectLocation {
+  id: Uuid;
+  project_id: Uuid;
+  /** 이 프로젝트 안에서만 유효한 AI 식별자 원문(예: "TEMP_A"). DB 밖 identifier와 달리 여기서는 영구 보관한다 — 같은 장소를 참조하는 여러 panel을 다시 연결할 때 필요하기 때문이다. */
+  location_key: string;
+  display_name: string;
+  visual_prompt: string;
+  wall_and_floor: string | null;
+  fixed_furniture: string | null;
+  window_style: string | null;
+  recurring_props: string | null;
+  distinctive_features: string | null;
   created_at: IsoTimestamp;
 }
 

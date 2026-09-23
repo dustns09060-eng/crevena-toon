@@ -119,3 +119,52 @@ describe("mapStoryboardRawToDraft — CHARACTER_A/B/C identifier 매핑", () => 
     expect(draft.panels[2].character_ids).toEqual([MOM_ID]);
   });
 });
+
+describe("mapStoryboardRawToDraft — 021/022 장소(location) 해석", () => {
+  const LOC_A_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const locationIdentifierToId = new Map([["LOCATION_A", LOC_A_ID]]);
+
+  test("location 필드가 없으면(undefined) location_id/temp_location_key 둘 다 null이다", () => {
+    const draft = mapStoryboardRawToDraft(raw, identifierToId, locationIdentifierToId);
+    expect(draft.panels[0].location_id).toBeNull();
+    expect(draft.panels[0].temp_location_key).toBeNull();
+    expect(draft.panels[1].location_id).toBeNull();
+    expect(draft.panels[1].temp_location_key).toBeNull();
+  });
+
+  test("LOCATION_A는 실제 UUID로 변환되고 temp_location_key는 null이다", () => {
+    const withLocation: StoryboardRaw = { ...raw, panels: [{ ...raw.panels[0], location: "LOCATION_A" }] };
+    const draft = mapStoryboardRawToDraft(withLocation, identifierToId, locationIdentifierToId);
+    expect(draft.panels[1].location_id).toBe(LOC_A_ID);
+    expect(draft.panels[1].temp_location_key).toBeNull();
+  });
+
+  test("TEMP_A는 UUID로 변환하지 않고 key 문자열 그대로 temp_location_key에 들어가며 location_id는 null이다", () => {
+    const withTemp: StoryboardRaw = { ...raw, panels: [{ ...raw.panels[0], location: "TEMP_A" }] };
+    const draft = mapStoryboardRawToDraft(withTemp, identifierToId, locationIdentifierToId);
+    expect(draft.panels[1].temp_location_key).toBe("TEMP_A");
+    expect(draft.panels[1].location_id).toBeNull();
+  });
+
+  test("raw.temporary_locations가 draft.temporaryLocations로 그대로 전달된다", () => {
+    const withTemp: StoryboardRaw = {
+      ...raw,
+      panels: [{ ...raw.panels[0], location: "TEMP_A" }],
+      temporary_locations: [{ location_key: "TEMP_A", display_name: "아쿠아리움", visual_prompt: "대형 수조" }],
+    };
+    const draft = mapStoryboardRawToDraft(withTemp, identifierToId, locationIdentifierToId);
+    expect(draft.temporaryLocations).toEqual([
+      { location_key: "TEMP_A", display_name: "아쿠아리움", visual_prompt: "대형 수조" },
+    ]);
+  });
+
+  test("raw.temporary_locations가 없으면 draft.temporaryLocations는 빈 배열이다", () => {
+    const draft = mapStoryboardRawToDraft(raw, identifierToId, locationIdentifierToId);
+    expect(draft.temporaryLocations).toEqual([]);
+  });
+
+  test("등록되지 않은 LOCATION_Z를 매핑하려 하면 에러를 던진다(방어적 검증)", () => {
+    const badRaw: StoryboardRaw = { ...raw, panels: [{ ...raw.panels[0], location: "LOCATION_Z" }] };
+    expect(() => mapStoryboardRawToDraft(badRaw, identifierToId, locationIdentifierToId)).toThrow();
+  });
+});

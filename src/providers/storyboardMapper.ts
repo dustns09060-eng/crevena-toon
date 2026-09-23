@@ -1,4 +1,4 @@
-import type { StoryboardRaw, StoryboardTimeOfDay } from "./storyboardSchema";
+import type { StoryboardRaw, StoryboardTemporaryLocationRaw, StoryboardTimeOfDay } from "./storyboardSchema";
 
 export interface StoryboardDraftDialogueLine {
   id: string;
@@ -20,16 +20,28 @@ export interface StoryboardDraftPanel {
   /** panel_type='cover'일 때만 값이 있다. */
   cover_title: string | null;
   cover_subtitle: string | null;
-  /** 021 — AI가 판단한(또는 사용자가 이후 직접 수정한) 장소/시간대. 둘 다 없을 수 있다. */
+  /** 021 — AI가 판단한(또는 사용자가 이후 직접 수정한) Saved Location/시간대. 둘 다 없을 수 있다. */
   location_id: string | null;
   time_of_day: StoryboardTimeOfDay | null;
+  /**
+   * 022 — 이 컷이 쓰는 Temporary Location의 key(draft.temporaryLocations를
+   * 가리킨다). location_id와 상호배타적이다. 아직 실제 DB row가 없을
+   * 수 있으므로(방금 생성된 draft) UUID가 아니라 key 문자열로 들고
+   * 있다가, 저장 시점에 서버가 upsert하며 실제 id로 변환한다.
+   */
+  temp_location_key: string | null;
 }
+
+/** 022 — draft.panels가 참조하는 Temporary Location의 실제 정의. */
+export type StoryboardDraftTemporaryLocation = StoryboardTemporaryLocationRaw;
 
 export interface StoryboardDraft {
   title: string;
   summary: string;
   /** panels[0]이 항상 표지(panel_type='cover', panel_number=1)이고, 이후가 본문(panel_number 2..N)이다. */
   panels: StoryboardDraftPanel[];
+  /** 022 — panels[].temp_location_key가 가리킬 수 있는 Temporary Location 전체 정의. */
+  temporaryLocations: StoryboardDraftTemporaryLocation[];
 }
 
 /**
@@ -55,17 +67,24 @@ export function mapStoryboardRawToDraft(
     return id;
   }
 
-  // location은 optional이라 raw에 값이 없으면(undefined) null을 반환한다
-  // (레거시/장소 미설정 프로젝트에서는 항상 이 경로를 탄다). 값이 있는데
-  // 매핑에 없는 경우는 validateStoryboardAgainstProject가 이미 걸러냈어야
-  // 하지만, 방어적으로 여기서도 에러를 던진다(조용히 null로 흘리지 않음).
-  function resolveLocationId(identifier: string | undefined): string | null {
-    if (identifier === undefined) return null;
+  // location은 optional이라 raw에 값이 없으면(undefined) 둘 다 null을
+  // 반환한다(레거시/장소 미설정 프로젝트에서는 항상 이 경로를 탄다).
+  // 022 — TEMP_로 시작하면 Temporary Location이므로 location_id로
+  // 변환하지 않고 key 문자열 그대로 들고 있는다(아직 실제 DB row가
+  // 없을 수 있어 UUID를 만들 수 없다 — 저장 시점에 서버가 upsert하며
+  // 변환한다). 그 외(LOCATION_*)는 기존과 동일하게 실제 UUID로
+  // 변환한다 — 값이 있는데 매핑에 없는 경우는
+  // validateStoryboardAgainstProject가 이미 걸러냈어야 하지만, 방어적으로
+  // 여기서도 에러를 던진다(조용히 null로 흘리지 않음).
+  function resolveLocation(identifier: string | undefined): { location_id: string | null; temp_location_key: string | null } {
+    if (identifier === undefined) return { location_id: null, temp_location_key: null };
+    if (identifier.startsWith("TEMP_")) return { location_id: null, temp_location_key: identifier };
     const id = locationIdentifierToId.get(identifier);
     if (!id) throw new Error(`장소 식별자를 ID로 변환할 수 없습니다: ${identifier}`);
-    return id;
+    return { location_id: id, temp_location_key: null };
   }
 
+  const coverLocation = resolveLocation(raw.cover.location);
   const coverPanel: StoryboardDraftPanel = {
     panel_number: 1,
     panel_type: "cover",
@@ -80,33 +99,39 @@ export function mapStoryboardRawToDraft(
     // 이 선택적 필드를 아예 생략한 경우) — DB/Draft 타입은 `string | null`
     // 이므로 undefined를 null로 정규화한다.
     cover_subtitle: raw.cover.cover_subtitle ?? null,
-    location_id: resolveLocationId(raw.cover.location),
+    location_id: coverLocation.location_id,
+    temp_location_key: coverLocation.temp_location_key,
     time_of_day: raw.cover.time_of_day ?? null,
   };
 
-  const scenePanels: StoryboardDraftPanel[] = raw.panels.map((panel) => ({
-    panel_number: panel.panel_number + 1,
-    panel_type: "scene",
-    scene_description: panel.scene_description,
-    character_ids: panel.characters.map(resolveId),
-    expression: [...panel.expressions, ...panel.actions].join(", "),
-    dialogue: panel.dialogue.map((line) => ({
-      id: crypto.randomUUID(),
-      character_id: resolveId(line.character),
-      text: line.text,
-    })),
-    // 같은 이유로 undefined -> null 정규화(narration도 optional).
-    narration: panel.narration ?? null,
-    image_prompt: panel.image_prompt,
-    cover_title: null,
-    cover_subtitle: null,
-    location_id: resolveLocationId(panel.location),
-    time_of_day: panel.time_of_day ?? null,
-  }));
+  const scenePanels: StoryboardDraftPanel[] = raw.panels.map((panel) => {
+    const location = resolveLocation(panel.location);
+    return {
+      panel_number: panel.panel_number + 1,
+      panel_type: "scene",
+      scene_description: panel.scene_description,
+      character_ids: panel.characters.map(resolveId),
+      expression: [...panel.expressions, ...panel.actions].join(", "),
+      dialogue: panel.dialogue.map((line) => ({
+        id: crypto.randomUUID(),
+        character_id: resolveId(line.character),
+        text: line.text,
+      })),
+      // 같은 이유로 undefined -> null 정규화(narration도 optional).
+      narration: panel.narration ?? null,
+      image_prompt: panel.image_prompt,
+      cover_title: null,
+      cover_subtitle: null,
+      location_id: location.location_id,
+      temp_location_key: location.temp_location_key,
+      time_of_day: panel.time_of_day ?? null,
+    };
+  });
 
   return {
     title: raw.title,
     summary: raw.summary,
     panels: [coverPanel, ...scenePanels],
+    temporaryLocations: raw.temporary_locations ?? [],
   };
 }

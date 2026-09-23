@@ -152,6 +152,27 @@ const STORYBOARD_RESPONSE_SCHEMA = {
         ],
       },
     },
+    // 022 — 이 에피소드에서 AI가 즉석으로 정의한 Temporary Location.
+    // required에 넣지 않는다 — 이 화에 임시 장소가 전혀 필요 없으면
+    // (예: 등장인물이 계속 저장된 장소에만 머무는 이야기) 아예 생략해야
+    // 정상이다.
+    temporary_locations: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          location_key: { type: "STRING" },
+          display_name: { type: "STRING" },
+          visual_prompt: { type: "STRING" },
+          wall_and_floor: { type: "STRING", nullable: true },
+          fixed_furniture: { type: "STRING", nullable: true },
+          window_style: { type: "STRING", nullable: true },
+          recurring_props: { type: "STRING", nullable: true },
+          distinctive_features: { type: "STRING", nullable: true },
+        },
+        required: ["location_key", "display_name", "visual_prompt"],
+      },
+    },
   },
   required: ["title", "summary", "cover", "panels"],
 } as const;
@@ -215,12 +236,37 @@ const STORYBOARD_SYSTEM_INSTRUCTION = `당신은 인스타그램 육아 일상�
 - time_of_day는 모든 컷(표지 포함)에 반드시 MORNING/DAY/EVENING/NIGHT/
   LATE_NIGHT 중 하나로 채우세요. scene_description의 맥락(예: "아이들이
   잠든 뒤", "육퇴", "늦은 밤")으로 알 수 있는 시간대를 정확히 판단하세요.
-- location 필드는 "등장 장소" 목록이 아래에 주어졌을 때만 사용합니다.
-  목록이 주어졌다면 cover와 모든 panel의 location 필드에 반드시 그
-  목록에 있는 LOCATION_A, LOCATION_B 같은 식별자만 정확히 그대로
-  사용하세요(characters와 동일한 규칙 — 목록에 없는 새 장소를 만들어내면
-  안 됩니다. 필요하면 이미 있는 장소로 대체하세요). "등장 장소" 목록
-  자체가 주어지지 않았다면 location 필드는 아예 채우지 마세요.`;
+- location 필드는 "등장 장소" 목록이 아래에 주어졌을 때만 그 목록의
+  LOCATION_A, LOCATION_B 같은 식별자를 사용합니다(characters와 동일한
+  규칙 — 목록에 없는 저장된 장소를 만들어내면 안 됩니다). 아래
+  "Temporary Location(임시 장소)" 규칙과 함께 사용하세요.
+
+Temporary Location(임시 장소) 규칙:
+- 이야기에 "등장 장소" 목록(저장된 장소)에 없는 새로운 공간이 필요할 수
+  있습니다 — 예: 키즈카페, 편의점, 아쿠아리움, 놀이동산처럼 이 화에만
+  잠깐 나오는 곳. 이런 곳은 저장된 장소로 억지로 끼워 맞추지 말고,
+  temporary_locations 배열에 TEMP_A, TEMP_B 같은 새 identifier로 직접
+  정의하세요(location_key/display_name/visual_prompt 필수).
+- 같은 화 안에서 여러 컷이 같은 물리적 공간(예: 같은 수조, 같은 테이블,
+  같은 매장 내부)을 배경으로 한다면 반드시 같은 location_key를
+  재사용하세요 — 컷마다 새로 만들면 안 됩니다.
+- temporary_locations 안의 location_key는 이 응답 안에서 서로 달라야
+  합니다(중복 금지).
+- cover/panel의 location 필드에는 저장된 장소(LOCATION_*)와 이번에
+  정의한 임시 장소(TEMP_*)를 한 에피소드 안에서 자유롭게 섞어 쓸 수
+  있습니다 — 예: 외출 장면은 TEMP_A(아쿠아리움), 귀가 후 장면은
+  LOCATION_A(우리 집 거실).
+- 이름이 비슷하다는 이유만으로 임시 장소를 저장된 장소와 같은 곳으로
+  섞지 마세요(예: "우리 집 거실"과 "친구 집 거실"과 "키즈카페 휴게실"은
+  전부 다른 공간입니다) — 소재의 실제 맥락으로만 판단하세요.
+- 편의점, 카페, 키즈카페, 영화관, 놀이동산, 아쿠아리움, 박물관, 미술관,
+  마트, 식당, 공원처럼 일반적인 업종의 임시 장소는, 소재에서 사용자가
+  특정 실제 브랜드를 직접 언급하지 않는 한 항상 브랜드 없는 일반적인
+  모습으로 묘사하세요 — visual_prompt에 실제 브랜드명, 간판 문구, 로고를
+  넣지 마세요(예: "generic Korean convenience store interior, no
+  visible brand signage").
+- "등장 장소" 목록도 없고 이야기에 임시 장소도 필요 없다면
+  temporary_locations 필드 자체를 아예 채우지 마세요.`;
 
 function buildCharacterContextText(characters: { display_name: string; role: string; personality: string | null; speaking_style: string | null }[]): string {
   return characters

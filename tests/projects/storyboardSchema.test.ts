@@ -424,4 +424,110 @@ describe("validateStoryboardAgainstProject", () => {
       expect(result.valid).toBe(true);
     });
   });
+
+  describe("022 — Temporary Location(TEMP_*) 교차 검증", () => {
+    test("Saved only — LOCATION_*만 쓰고 temporary_locations가 없으면 통과", () => {
+      const board = makeStoryboard(5);
+      board.panels[0].location = "LOCATION_A";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: ["LOCATION_A"],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    test("Temporary only — temporary_locations에 정의한 TEMP_A를 참조하면 통과(Saved 목록 없어도)", () => {
+      const board = makeStoryboard(5);
+      board.temporary_locations = [
+        { location_key: "TEMP_A", display_name: "아쿠아리움 대형 수조", visual_prompt: "거대한 원형 수조" },
+      ];
+      board.panels[0].location = "TEMP_A";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: [],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    test("Saved + Temporary mixed — 같은 에피소드에서 LOCATION_A와 TEMP_A를 함께 써도 통과", () => {
+      const board = makeStoryboard(5);
+      board.temporary_locations = [
+        { location_key: "TEMP_A", display_name: "아쿠아리움 대형 수조", visual_prompt: "거대한 원형 수조" },
+      ];
+      board.panels[0].location = "TEMP_A";
+      board.panels[1].location = "LOCATION_A";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: ["LOCATION_A"],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    test("같은 TEMP_A를 여러 panel이 참조해도 통과(공유 참조는 정상)", () => {
+      const board = makeStoryboard(5);
+      board.temporary_locations = [
+        { location_key: "TEMP_A", display_name: "아쿠아리움 대형 수조", visual_prompt: "거대한 원형 수조" },
+      ];
+      board.panels[0].location = "TEMP_A";
+      board.panels[1].location = "TEMP_A";
+      board.panels[2].location = "TEMP_A";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: [],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    test("정의되지 않은 TEMP_Z를 참조하면 거부", () => {
+      const board = makeStoryboard(5);
+      board.temporary_locations = [
+        { location_key: "TEMP_A", display_name: "아쿠아리움 대형 수조", visual_prompt: "거대한 원형 수조" },
+      ];
+      board.panels[0].location = "TEMP_Z";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: [],
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    test("temporary_locations 안에 같은 location_key가 중복 정의되면 거부", () => {
+      const board = makeStoryboard(5);
+      board.temporary_locations = [
+        { location_key: "TEMP_A", display_name: "아쿠아리움 대형 수조", visual_prompt: "거대한 원형 수조" },
+        { location_key: "TEMP_A", display_name: "다른 정의", visual_prompt: "다른 설명" },
+      ];
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: [],
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    test("LOCATION_*와 TEMP_* namespace는 서로 섞이지 않는다(TEMP_A가 Saved 목록에 있어도 무관)", () => {
+      const board = makeStoryboard(5);
+      // TEMP_A가 temporary_locations에 정의되지 않았는데 Saved 허용목록에
+      // "TEMP_A" 문자열이 우연히 있어도(있을 수 없는 상황이지만) Saved
+      // 규칙이 아니라 TEMP 규칙(이번 응답에 정의됐는지)으로만 판단해야 한다.
+      board.panels[0].location = "TEMP_A";
+      const result = validateStoryboardAgainstProject(board, {
+        expectedSceneCount: 5,
+        allowedIdentifiers,
+        allowedLocationIdentifiers: ["TEMP_A"],
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    test("TEMP_ 형식이 아닌 값(예: TEMP1, temp_a)은 zod 단계에서부터 거부된다", () => {
+      const board = makeStoryboard(5);
+      board.panels[0].location = "TEMP1";
+      expect(StoryboardRawSchema.safeParse(board).success).toBe(false);
+    });
+  });
 });

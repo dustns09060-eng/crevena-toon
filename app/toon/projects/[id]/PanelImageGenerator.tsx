@@ -28,13 +28,17 @@ export default function PanelImageGenerator({
   initialImages,
   initialReadinessErrors,
   allLocations,
+  projectLocations,
 }: {
   panels: ToonPanel[];
   initialImages: Record<string, PanelImagesState>;
   initialReadinessErrors: string[];
   /** 021 — 이 시리즈의 Location Set. 없으면 빈 배열(Location 선택 UI 자체를 숨긴다). */
   allLocations: { id: string; display_name: string }[];
+  /** 022 — 이 프로젝트의 Temporary Location. 읽기 전용 배지 표시에만 쓴다. */
+  projectLocations: { id: string; location_key: string; display_name: string }[];
 }) {
+  const projectLocationById = new Map(projectLocations.map((l) => [l.id, l]));
   const [images, setImages] = useState<Record<string, PanelImagesState>>(initialImages);
   const [statusByPanel, setStatusByPanel] = useState<Record<string, "idle" | "generating" | "failed">>({});
   const [errorByPanel, setErrorByPanel] = useState<Record<string, string>>({});
@@ -170,6 +174,10 @@ export default function PanelImageGenerator({
                 <p className="hint" style={{ marginTop: 0 }}>
                   {panel.scene}
                 </p>
+
+                {panel.project_location_id && projectLocationById.has(panel.project_location_id) && (
+                  <p className="hint">🏷️ {projectLocationById.get(panel.project_location_id)!.display_name} · 이번 화</p>
+                )}
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
                   {allLocations.length > 0 && (

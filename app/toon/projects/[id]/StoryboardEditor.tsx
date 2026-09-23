@@ -8,7 +8,7 @@ import {
   regenerateStoryboardWithSettingsAction,
   saveStoryboardAction,
 } from "../../../../lib/projects/storyboard";
-import type { StoryboardDraftPanel } from "../../../../src/providers/storyboardMapper";
+import type { StoryboardDraftPanel, StoryboardDraftTemporaryLocation } from "../../../../src/providers/storyboardMapper";
 import type { ProjectCharacterContext } from "../../../../lib/projects/service";
 import type { PanelImageView } from "../../../../lib/projects/panelImages";
 import type { ToonPanel, ToonProject } from "../../../../src/db/types";
@@ -19,7 +19,28 @@ import {
 } from "../../../../src/providers/projectPanelCountConfig";
 import PanelImageGenerator from "./PanelImageGenerator";
 
-function panelsToDraftPanels(panels: ToonPanel[]): StoryboardDraftPanel[] {
+/** 022 — 이 프로젝트가 지금까지 정의한 Temporary Location(전체 정의). */
+export interface ProjectLocationOption {
+  id: string;
+  location_key: string;
+  display_name: string;
+  visual_prompt: string;
+  wall_and_floor: string | null;
+  fixed_furniture: string | null;
+  window_style: string | null;
+  recurring_props: string | null;
+  distinctive_features: string | null;
+}
+
+/**
+ * 022 — toon_panels는 project_location_id(UUID)만 들고 있고 AI용
+ * key("TEMP_A")는 toon_project_locations에만 있다. draft/저장 계층은
+ * 항상 key로 통신하므로(아직 DB row가 없는 새 temp location도 다뤄야
+ * 하기 때문), 기존 저장된 panel을 다시 draft로 불러올 때는 이 map으로
+ * id -> key를 역변환한다.
+ */
+function panelsToDraftPanels(panels: ToonPanel[], projectLocations: ProjectLocationOption[]): StoryboardDraftPanel[] {
+  const idToKey = new Map(projectLocations.map((l) => [l.id, l.location_key]));
   return panels.map((p) => ({
     panel_number: p.panel_number,
     panel_type: p.panel_type,
@@ -33,7 +54,28 @@ function panelsToDraftPanels(panels: ToonPanel[]): StoryboardDraftPanel[] {
     cover_subtitle: p.cover_subtitle,
     location_id: p.location_id,
     time_of_day: p.time_of_day,
+    temp_location_key: p.project_location_id ? (idToKey.get(p.project_location_id) ?? null) : null,
   }));
+}
+
+/** 022 — 초기 로드 시 실제로 panel이 참조하는 temp location만 draft에 싣는다. */
+function deriveInitialTemporaryLocations(
+  panels: StoryboardDraftPanel[],
+  projectLocations: ProjectLocationOption[]
+): StoryboardDraftTemporaryLocation[] {
+  const usedKeys = new Set(panels.map((p) => p.temp_location_key).filter((k): k is string => Boolean(k)));
+  return projectLocations
+    .filter((l) => usedKeys.has(l.location_key))
+    .map((l) => ({
+      location_key: l.location_key,
+      display_name: l.display_name,
+      visual_prompt: l.visual_prompt,
+      wall_and_floor: l.wall_and_floor,
+      fixed_furniture: l.fixed_furniture,
+      window_style: l.window_style,
+      recurring_props: l.recurring_props,
+      distinctive_features: l.distinctive_features,
+    }));
 }
 
 function renumber(panels: StoryboardDraftPanel[]): StoryboardDraftPanel[] {
@@ -54,6 +96,7 @@ function makeEmptyScenePanel(panelNumber: number): StoryboardDraftPanel {
     cover_subtitle: null,
     location_id: null,
     time_of_day: null,
+    temp_location_key: null,
   };
 }
 
@@ -70,6 +113,7 @@ export default function StoryboardEditor({
   characters,
   allCharacters,
   allLocations,
+  projectLocations,
   initialPanels,
   panelImagesData,
 }: {
@@ -77,6 +121,8 @@ export default function StoryboardEditor({
   characters: ProjectCharacterContext[];
   allCharacters: { id: string; display_name: string; role: string }[];
   allLocations: { id: string; display_name: string }[];
+  /** 022 — 이 프로젝트가 지금까지 정의한 Temporary Location(전체). 사용자는 직접 관리하지 않고 읽기 전용 배지로만 노출한다. */
+  projectLocations: ProjectLocationOption[];
   initialPanels: ToonPanel[];
   panelImagesData: {
     readinessErrors: string[];
@@ -84,7 +130,12 @@ export default function StoryboardEditor({
   } | null;
 }) {
   const router = useRouter();
-  const [panels, setPanels] = useState<StoryboardDraftPanel[]>(() => panelsToDraftPanels(initialPanels));
+  const [panels, setPanels] = useState<StoryboardDraftPanel[]>(() =>
+    panelsToDraftPanels(initialPanels, projectLocations)
+  );
+  const [temporaryLocations, setTemporaryLocations] = useState<StoryboardDraftTemporaryLocation[]>(() =>
+    deriveInitialTemporaryLocations(panelsToDraftPanels(initialPanels, projectLocations), projectLocations)
+  );
   const [summary, setSummary] = useState(project.story_summary ?? "");
   const [hasStoryboard, setHasStoryboard] = useState(initialPanels.length > 0);
   const [status, setStatus] = useState(project.status);
@@ -124,6 +175,7 @@ export default function StoryboardEditor({
       const result = await generateStoryboardAction(project.id);
       if (result.ok && result.draft) {
         setPanels(result.draft.panels);
+        setTemporaryLocations(result.draft.temporaryLocations);
         setSummary(result.draft.summary);
         setHasStoryboard(true);
         setDirty(true);
@@ -164,6 +216,7 @@ export default function StoryboardEditor({
         setCurrentPanelCount(settingsPanelCount);
         setCurrentCharacterIds(settingsCharacterIds);
         setPanels(result.draft.panels);
+        setTemporaryLocations(result.draft.temporaryLocations);
         setSummary(result.draft.summary);
         setHasStoryboard(true);
         setDirty(false);
@@ -187,7 +240,12 @@ export default function StoryboardEditor({
   function handleSave() {
     setErrorMessage(null);
     startSaving(async () => {
-      const result = await saveStoryboardAction(project.id, { title: project.title, summary, panels });
+      const result = await saveStoryboardAction(project.id, {
+        title: project.title,
+        summary,
+        panels,
+        temporaryLocations,
+      });
       if (result.ok) {
         setDirty(false);
         setInfoMessage(null);
@@ -481,13 +539,30 @@ export default function StoryboardEditor({
                   />
                 </div>
 
+                {panel.temp_location_key && (
+                  <div className="field">
+                    <label>장소</label>
+                    <p className="hint">
+                      🏷️{" "}
+                      {temporaryLocations.find((l) => l.location_key === panel.temp_location_key)?.display_name ??
+                        "임시 장소"}{" "}
+                      · 이번 화
+                    </p>
+                    <p className="hint">
+                      AI가 이번 화에만 쓰는 장소로 즉석 정의했어요. 저장된 장소로 바꾸려면 아래에서 선택하세요.
+                    </p>
+                  </div>
+                )}
+
                 {allLocations.length > 0 && (
                   <div className="field">
-                    <label>장소 (선택)</label>
+                    <label>{panel.temp_location_key ? "저장된 장소로 바꾸기 (선택)" : "장소 (선택)"}</label>
                     <select
                       className="input"
                       value={panel.location_id ?? ""}
-                      onChange={(e) => updatePanel(index, { location_id: e.target.value || null })}
+                      onChange={(e) =>
+                        updatePanel(index, { location_id: e.target.value || null, temp_location_key: null })
+                      }
                     >
                       <option value="">선택 안 함</option>
                       {allLocations.map((l) => (
@@ -496,7 +571,7 @@ export default function StoryboardEditor({
                         </option>
                       ))}
                     </select>
-                    <p className="hint">AI가 자동으로 배정했어요. 다르면 직접 바꿔주세요.</p>
+                    {!panel.temp_location_key && <p className="hint">AI가 자동으로 배정했어요. 다르면 직접 바꿔주세요.</p>}
                   </div>
                 )}
 
@@ -640,6 +715,7 @@ export default function StoryboardEditor({
                 initialImages={panelImagesData.images}
                 initialReadinessErrors={panelImagesData.readinessErrors}
                 allLocations={allLocations}
+                projectLocations={projectLocations}
               />
             </div>
           )}
