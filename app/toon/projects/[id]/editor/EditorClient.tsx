@@ -4,15 +4,29 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { EditorPanelData } from "../../../../../lib/projects/editor";
 import { saveBubbleLayoutAction, saveCoverLayoutAction, saveFinalRenderAction } from "../../../../../lib/projects/editor";
 import {
+  AUTO_FIT_MAX_HEIGHT,
+  AUTO_FIT_MAX_WIDTH,
+  AUTO_FIT_MIN_HEIGHT,
+  AUTO_FIT_MIN_WIDTH,
+  AUTO_FIT_WRAP_WIDTH_RATIO,
+  DEFAULT_BUBBLE_FONT_SIZE,
   clampBubbleRect,
+  computeAutoFitBubbleSize,
   getDefaultBubbleForIndex,
   getDefaultCoverTitleBubble,
   getDefaultNarrationBubble,
 } from "../../../../../lib/editor/bubbleLayout";
-import { canvasToPngBlob, fetchAsObjectUrl, renderPanelToCanvas, type RenderedForeground } from "../../../../../lib/editor/renderPanel";
+import {
+  FONT_FAMILY,
+  canvasToPngBlob,
+  fetchAsObjectUrl,
+  renderPanelToCanvas,
+  type RenderedForeground,
+} from "../../../../../lib/editor/renderPanel";
+import { scaleFontSizeToForeground } from "../../../../../lib/editor/containFit";
 import { getFinalImageDimensions } from "../../../../../src/providers/finalImageConfig";
 import type { ProjectCharacterContext } from "../../../../../lib/projects/service";
-import type { ToonBubbleStyle } from "../../../../../src/db/types";
+import type { ToonBubbleStyle, ToonBubbleTailDirection } from "../../../../../src/db/types";
 
 type Selection = { kind: "dialogue"; id: string } | { kind: "narration" } | { kind: "cover" } | null;
 
@@ -26,6 +40,15 @@ const BUBBLE_STYLE_LABELS: Record<ToonBubbleStyle, string> = {
   round: "일반 말풍선",
   thought: "생각 말풍선",
   emphasis: "강조 말풍선",
+};
+
+const TAIL_DIRECTION_LABELS: Record<Exclude<ToonBubbleTailDirection, "none">, string> = {
+  "bottom-left": "왼쪽 아래",
+  "bottom-right": "오른쪽 아래",
+  "top-left": "왼쪽 위",
+  "top-right": "오른쪽 위",
+  left: "왼쪽",
+  right: "오른쪽",
 };
 
 export default function EditorClient({
@@ -167,6 +190,67 @@ export default function EditorClient({
       ...p,
       dialogue: p.dialogue.map((d) =>
         d.id === itemId && d.bubble ? { ...d, bubble: clampBubbleRect({ ...d.bubble, [field]: value }) } : d
+      ),
+    }));
+  }
+
+  // STEP — "내용에 맞게" Auto Fit. 사용자가 버튼을 누른 시점에만 실행되며,
+  // x/y는 그대로 두고 width/height만 실제 렌더러와 동일한 font/wrap 규칙으로
+  // 다시 계산한다. 페이지 로드나 다른 조작만으로는 절대 호출되지 않는다.
+  function handleAutoFit(itemId: string) {
+    const item = panel.dialogue.find((d) => d.id === itemId);
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!item?.bubble || !ctx) return;
+
+    const fg = foregroundRect ?? fallbackForeground(dims.width, dims.height);
+    const fontSizePx = scaleFontSizeToForeground(item.bubble.font_size ?? DEFAULT_BUBBLE_FONT_SIZE, fg.drawWidth);
+    ctx.font = `${fontSizePx}px ${FONT_FAMILY}`;
+
+    const { widthPx, heightPx } = computeAutoFitBubbleSize({
+      text: item.text,
+      fontSizePx,
+      measureWidth: (t) => ctx.measureText(t).width,
+      wrapWidthPx: fg.drawWidth * AUTO_FIT_WRAP_WIDTH_RATIO,
+      minWidthPx: AUTO_FIT_MIN_WIDTH * fg.drawWidth,
+      minHeightPx: AUTO_FIT_MIN_HEIGHT * fg.drawHeight,
+      maxWidthPx: AUTO_FIT_MAX_WIDTH * fg.drawWidth,
+      maxHeightPx: AUTO_FIT_MAX_HEIGHT * fg.drawHeight,
+    });
+
+    updatePanel(panel.id, (p) => ({
+      ...p,
+      dialogue: p.dialogue.map((d) =>
+        d.id === itemId && d.bubble
+          ? { ...d, bubble: clampBubbleRect({ ...d.bubble, width: widthPx / fg.drawWidth, height: heightPx / fg.drawHeight }) }
+          : d
+      ),
+    }));
+  }
+
+  function handleTailEnabledChange(itemId: string, enabled: boolean) {
+    updatePanel(panel.id, (p) => ({
+      ...p,
+      dialogue: p.dialogue.map((d) =>
+        d.id === itemId && d.bubble
+          ? {
+              ...d,
+              bubble: {
+                ...d.bubble,
+                tail_enabled: enabled,
+                // 꺼져 있다가 처음 켤 때 방향이 "none"이면 실제로 보이는 방향으로 바꿔준다.
+                tail_direction: enabled && d.bubble.tail_direction === "none" ? "bottom-left" : d.bubble.tail_direction,
+              },
+            }
+          : d
+      ),
+    }));
+  }
+
+  function handleTailDirectionChange(itemId: string, direction: ToonBubbleTailDirection) {
+    updatePanel(panel.id, (p) => ({
+      ...p,
+      dialogue: p.dialogue.map((d) =>
+        d.id === itemId && d.bubble ? { ...d, bubble: { ...d.bubble, tail_direction: direction } } : d
       ),
     }));
   }
@@ -593,6 +677,37 @@ export default function EditorClient({
                   onChange={(e) => handleSizeChange(item.id, "height", Number(e.target.value) / 100)}
                 />
               </div>
+              <div className="form-actions">
+                <button type="button" className="btn" onClick={() => handleAutoFit(item.id)}>
+                  내용에 맞게
+                </button>
+              </div>
+              <div className="field">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={item.bubble.tail_enabled === true}
+                    onChange={(e) => handleTailEnabledChange(item.id, e.target.checked)}
+                  />{" "}
+                  말풍선 꼬리(Tail) 사용
+                </label>
+              </div>
+              {item.bubble.tail_enabled === true && (
+                <div className="field">
+                  <label>꼬리 방향</label>
+                  <select
+                    className="input"
+                    value={item.bubble.tail_direction === "none" ? "bottom-left" : item.bubble.tail_direction}
+                    onChange={(e) => handleTailDirectionChange(item.id, e.target.value as ToonBubbleTailDirection)}
+                  >
+                    {(Object.keys(TAIL_DIRECTION_LABELS) as Exclude<ToonBubbleTailDirection, "none">[]).map((dir) => (
+                      <option key={dir} value={dir}>
+                        {TAIL_DIRECTION_LABELS[dir]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </>
           )}
         </div>

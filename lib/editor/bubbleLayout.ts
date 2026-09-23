@@ -114,3 +114,138 @@ export function wrapText(measureWidth: (text: string) => number, text: string, m
 
   return lines.length > 0 ? lines : [""];
 }
+
+/**
+ * renderPanel.ts의 drawWrappedText가 실제로 쓰는 값과 반드시 같아야 한다 —
+ * Auto Fit이 계산에 쓰는 padding/lineHeight 비율이 실제 렌더링과 어긋나면
+ * "글자에 딱 맞춘 크기"가 실제로는 렌더러 안에서 다시 줄바꿈되며 어긋난다.
+ */
+export const DIALOGUE_TEXT_PADDING_RATIO = 0.1; // 좌우 각각 box.width의 10%
+export const LINE_HEIGHT_RATIO = 1.3; // fontSizePx 기준
+
+// Auto Fit 결과 bubble이 너무 작거나(글자가 안 보임) 화면을 거의 덮을 만큼
+// 커지는 것을 막는 안전 범위. 0~1 정규화 좌표 기준.
+export const AUTO_FIT_MIN_WIDTH = 0.14;
+export const AUTO_FIT_MIN_HEIGHT = 0.06;
+export const AUTO_FIT_MAX_WIDTH = 0.9;
+export const AUTO_FIT_MAX_HEIGHT = 0.35;
+/** 한 줄이 끝없이 길어지지 않도록 줄바꿈을 강제하는 기준 폭(foreground 폭 대비 비율). */
+export const AUTO_FIT_WRAP_WIDTH_RATIO = 0.7;
+/** 세로 방향은 텍스트 블록에 약간의 여유(숨 쉴 공간)를 더한다. */
+export const AUTO_FIT_VERTICAL_BREATHING_ROOM = 1.15;
+
+export interface AutoFitBubbleSizeInput {
+  text: string;
+  /** 실제 렌더링될 폰트 크기(px, foreground 기준으로 이미 스케일된 값). */
+  fontSizePx: number;
+  /** ctx.measureText(...).width 같은 실제 텍스트 폭 측정 함수. */
+  measureWidth: (text: string) => number;
+  /** 이 폭을 넘으면 줄바꿈한다(px). */
+  wrapWidthPx: number;
+  minWidthPx: number;
+  minHeightPx: number;
+  maxWidthPx: number;
+  maxHeightPx: number;
+}
+
+export interface AutoFitBubbleSizeResult {
+  widthPx: number;
+  heightPx: number;
+  lineCount: number;
+}
+
+/**
+ * STEP — "내용에 맞게" Auto Fit 크기 계산.
+ *
+ * drawWrappedText와 동일한 규칙(좌우 10% padding, lineHeight=fontSize*1.3)을
+ * 거꾸로 적용해 "이 텍스트가 이 폰트 크기로 자연스럽게 들어가는 최소 크기"를
+ * 구한다. wrapWidthPx로 먼저 줄바꿈한 뒤 실제 가장 긴 줄의 폭만큼만
+ * 최종 너비로 쓰므로, 짧은 문장은 작게, 긴 문장은 wrapWidthPx 한도 내에서
+ * 여러 줄로 감싸진다. 최소/최대 안전 범위를 벗어나지 않게 clamp한다.
+ */
+export function computeAutoFitBubbleSize(input: AutoFitBubbleSizeInput): AutoFitBubbleSizeResult {
+  const usableWrapWidth = Math.max(1, input.wrapWidthPx * (1 - DIALOGUE_TEXT_PADDING_RATIO * 2));
+  const lines = wrapText(input.measureWidth, input.text, usableWrapWidth);
+  const longestLineWidth = Math.max(...lines.map((line) => input.measureWidth(line)));
+
+  const naturalWidthPx = longestLineWidth / (1 - DIALOGUE_TEXT_PADDING_RATIO * 2);
+  const widthPx = Math.min(Math.max(naturalWidthPx, input.minWidthPx), input.maxWidthPx);
+
+  const lineHeightPx = input.fontSizePx * LINE_HEIGHT_RATIO;
+  const naturalHeightPx = lines.length * lineHeightPx * AUTO_FIT_VERTICAL_BREATHING_ROOM;
+  const heightPx = Math.min(Math.max(naturalHeightPx, input.minHeightPx), input.maxHeightPx);
+
+  return { widthPx, heightPx, lineCount: lines.length };
+}
+
+/**
+ * Legacy Tail Protection — 이 함수 하나만 통과해야 실제로 tail이 그려진다.
+ * style이 round가 아니거나(생각/강조 말풍선), tail_enabled가 true가 아니거나
+ * (기존 1화 데이터는 전부 undefined), 방향이 none이면 그리지 않는다.
+ */
+export function shouldRenderBubbleTail(bubble: Pick<ToonBubble, "style" | "tail_enabled" | "tail_direction">): boolean {
+  const style = bubble.style ?? "round";
+  return style === "round" && bubble.tail_enabled === true && bubble.tail_direction !== "none";
+}
+
+export interface PixelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * 말풍선 꼬리(tail) 삼각형의 세 꼭짓점을 계산한다. 순수 함수라 Editor의
+ * 드래그 오버레이 미리보기와 최종 canvas 렌더링(renderPanel.ts)이 완전히
+ * 같은 모양을 그리도록 공유한다.
+ */
+export function computeBubbleTailTriangle(
+  px: PixelRect,
+  direction: ToonBubbleTailDirection
+): [[number, number], [number, number], [number, number]] | null {
+  if (direction === "none") return null;
+
+  const t = Math.max(10, Math.min(24, Math.min(px.width, px.height) * 0.22));
+
+  switch (direction) {
+    case "bottom-left":
+      return [
+        [px.x + px.width * 0.18, px.y + px.height],
+        [px.x + px.width * 0.18 + t, px.y + px.height],
+        [px.x + px.width * 0.1, px.y + px.height + t * 1.3],
+      ];
+    case "bottom-right":
+      return [
+        [px.x + px.width * 0.82 - t, px.y + px.height],
+        [px.x + px.width * 0.82, px.y + px.height],
+        [px.x + px.width * 0.9, px.y + px.height + t * 1.3],
+      ];
+    case "top-left":
+      return [
+        [px.x + px.width * 0.18, px.y],
+        [px.x + px.width * 0.18 + t, px.y],
+        [px.x + px.width * 0.1, px.y - t * 1.3],
+      ];
+    case "top-right":
+      return [
+        [px.x + px.width * 0.82 - t, px.y],
+        [px.x + px.width * 0.82, px.y],
+        [px.x + px.width * 0.9, px.y - t * 1.3],
+      ];
+    case "left":
+      return [
+        [px.x, px.y + px.height * 0.5 - t * 0.6],
+        [px.x, px.y + px.height * 0.5 + t * 0.6],
+        [px.x - t * 1.3, px.y + px.height * 0.5],
+      ];
+    case "right":
+      return [
+        [px.x + px.width, px.y + px.height * 0.5 - t * 0.6],
+        [px.x + px.width, px.y + px.height * 0.5 + t * 0.6],
+        [px.x + px.width + t * 1.3, px.y + px.height * 0.5],
+      ];
+    default:
+      return null;
+  }
+}

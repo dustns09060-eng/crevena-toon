@@ -1,7 +1,7 @@
 "use client";
 
 import type { ToonCoverTitleBubble, ToonDialogueItem, ToonNarrationBubble, ToonPanelType } from "../../src/db/types";
-import { wrapText } from "./bubbleLayout";
+import { DIALOGUE_TEXT_PADDING_RATIO, computeBubbleTailTriangle, shouldRenderBubbleTail, wrapText } from "./bubbleLayout";
 import { type ContainRect, computeContainRect, computeCoverRect, normalizedRectToCanvasPx, scaleFontSizeToForeground } from "./containFit";
 
 /**
@@ -30,7 +30,7 @@ export interface RenderPanelInput {
   height: number;
 }
 
-const FONT_FAMILY = "'Noto Sans KR', sans-serif";
+export const FONT_FAMILY = "'Noto Sans KR', sans-serif";
 /** 배경 blur 강도 — canvas 폭에 비례시켜 해상도가 달라져도 시각적으로 같은 강도를 유지한다. */
 const BACKGROUND_BLUR_RATIO = 0.03;
 /** blur 배경이 foreground보다 튀지 않도록 살짝 어둡게 덮는 정도. 특정 색조가 아닌 순수 검정 반투명이라 화풍(색감) 자체는 바꾸지 않는다. */
@@ -77,7 +77,7 @@ function drawWrappedText(
   text: string,
   box: { x: number; y: number; width: number; height: number },
   fontSizePx: number,
-  paddingRatio = 0.1
+  paddingRatio = DIALOGUE_TEXT_PADDING_RATIO
 ) {
   ctx.font = `${fontSizePx}px ${FONT_FAMILY}`;
   ctx.textBaseline = "middle";
@@ -117,13 +117,61 @@ function drawBlurredBackground(ctx: CanvasRenderingContext2D, img: HTMLImageElem
   ctx.restore();
 }
 
-function drawBubble(ctx: CanvasRenderingContext2D, item: ToonDialogueItem, foreground: ContainRect) {
+function drawBubbleTail(
+  ctx: CanvasRenderingContext2D,
+  px: { x: number; y: number; width: number; height: number },
+  item: ToonDialogueItem,
+  canvasWidth: number,
+  canvasHeight: number
+) {
+  const bubble = item.bubble;
+  if (!bubble || !shouldRenderBubbleTail(bubble)) return;
+  const triangle = computeBubbleTailTriangle(px, bubble.tail_direction);
+  if (!triangle) return;
+
+  // 캔버스 밖으로 나가지 않도록 각 꼭짓점을 클램프한다.
+  const clamped = triangle.map(([x, y]) => [
+    Math.min(Math.max(x, 0), canvasWidth),
+    Math.min(Math.max(y, 0), canvasHeight),
+  ]);
+
+  ctx.save();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.moveTo(clamped[0][0], clamped[0][1]);
+  ctx.lineTo(clamped[1][0], clamped[1][1]);
+  ctx.lineTo(clamped[2][0], clamped[2][1]);
+  ctx.closePath();
+  ctx.fill();
+  // 말풍선 몸통과 자연스럽게 이어지도록, 베이스(bubble 테두리에 닿는) 변은
+  // 제외하고 바깥쪽 두 변만 테두리와 같은 스타일로 다시 긋는다.
+  ctx.lineWidth = (bubble.style ?? "round") === "emphasis" ? 4 : 2;
+  ctx.strokeStyle = "#111111";
+  ctx.beginPath();
+  ctx.moveTo(clamped[0][0], clamped[0][1]);
+  ctx.lineTo(clamped[2][0], clamped[2][1]);
+  ctx.lineTo(clamped[1][0], clamped[1][1]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBubble(
+  ctx: CanvasRenderingContext2D,
+  item: ToonDialogueItem,
+  foreground: ContainRect,
+  canvasWidth: number,
+  canvasHeight: number
+) {
   const bubble = item.bubble;
   if (!bubble) return;
 
   const px = normalizedRectToCanvasPx(bubble, foreground);
   const fontSizePx = scaleFontSizeToForeground(bubble.font_size ?? 28, foreground.drawWidth);
   const style = bubble.style ?? "round";
+
+  // round 스타일의 speech bubble tail은 몸통(둥근 사각형)보다 먼저 그려서,
+  // 몸통이 tail의 베이스 쪽 이음매를 자연스럽게 덮게 한다.
+  drawBubbleTail(ctx, px, item, canvasWidth, canvasHeight);
 
   ctx.save();
   ctx.fillStyle = "#ffffff";
@@ -245,7 +293,7 @@ export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: Rend
 
   // 3) 대사/내레이션은 항상 foreground 좌표계 기준.
   for (const item of input.dialogue) {
-    drawBubble(ctx, item, foreground);
+    drawBubble(ctx, item, foreground, input.width, input.height);
   }
   if (input.narration && input.narrationBubble) {
     drawNarration(ctx, input.narration, input.narrationBubble, foreground);

@@ -243,6 +243,43 @@ describe("saveBubbleLayoutAction", () => {
     expect(result.ok).toBe(false);
   });
 
+  test("tail_enabled/left,right 방향이 포함된 bubble도 정상 저장된다(신규 Tail 기능)", async () => {
+    const { saveBubbleLayoutAction } = await import("../../lib/projects/editor");
+    const dialogue = [
+      {
+        id: DIALOGUE_ID,
+        character_id: CHAR_A,
+        text: "대사",
+        bubble_type: "speech" as const,
+        bubble: { x: 0.1, y: 0.1, width: 0.3, height: 0.1, tail_direction: "right" as const, tail_enabled: true },
+      },
+    ];
+
+    const result = await saveBubbleLayoutAction("panel-1", dialogue, null, null);
+    expect(result.ok).toBe(true);
+    const updates = currentSupabase._calls["toon_panels.update"] as Record<string, unknown>[];
+    expect(updates[0]).toEqual({ dialogue, narration: null, narration_bubble: null });
+  });
+
+  test("기존(레거시) dialogue를 그대로 다시 저장해도 tail_enabled가 임의로 추가되지 않는다(regression)", async () => {
+    const { saveBubbleLayoutAction } = await import("../../lib/projects/editor");
+    const legacyDialogue = [
+      {
+        id: DIALOGUE_ID,
+        character_id: CHAR_A,
+        text: "기존 대사",
+        bubble_type: "speech" as const,
+        bubble: { x: 0.1, y: 0.1, width: 0.3, height: 0.1, tail_direction: "bottom-left" as const },
+      },
+    ];
+
+    const result = await saveBubbleLayoutAction("panel-1", legacyDialogue, null, null);
+    expect(result.ok).toBe(true);
+    const updates = currentSupabase._calls["toon_panels.update"] as Record<string, unknown>[];
+    const savedDialogue = (updates[0] as { dialogue: Array<{ bubble?: { tail_enabled?: boolean } }> }).dialogue;
+    expect(savedDialogue[0].bubble?.tail_enabled).toBeUndefined();
+  });
+
   test("경계를 벗어난 bubble 좌표(x+width>1)는 거부된다", async () => {
     const { saveBubbleLayoutAction } = await import("../../lib/projects/editor");
     const dialogue = [

@@ -31,6 +31,25 @@ describe("getDefaultBubbleForIndex", () => {
   });
 });
 
+describe("ToonBubbleSchema — tail_enabled / left,right 방향 (additive, migration 없음)", () => {
+  test("tail_enabled가 없어도(레거시 데이터) 유효하다", () => {
+    const legacyBubble = getDefaultBubbleForIndex(0);
+    expect(ToonBubbleSchema.safeParse(legacyBubble).success).toBe(true);
+  });
+
+  test("tail_enabled: true를 허용한다", () => {
+    const bubble = { ...getDefaultBubbleForIndex(0), tail_enabled: true };
+    expect(ToonBubbleSchema.safeParse(bubble).success).toBe(true);
+  });
+
+  test("tail_direction에 left/right를 허용한다", () => {
+    const left = { ...getDefaultBubbleForIndex(0), tail_direction: "left" as const };
+    const right = { ...getDefaultBubbleForIndex(0), tail_direction: "right" as const };
+    expect(ToonBubbleSchema.safeParse(left).success).toBe(true);
+    expect(ToonBubbleSchema.safeParse(right).success).toBe(true);
+  });
+});
+
 describe("getDefaultNarrationBubble", () => {
   test("하단 영역에 배치되고 유효성 검증을 통과한다", () => {
     const narration = getDefaultNarrationBubble();

@@ -91,6 +91,8 @@ export type ToonBubbleTailDirection =
   | "bottom-right"
   | "top-left"
   | "top-right"
+  | "left"
+  | "right"
   | "none";
 
 /** STEP 7 — 말풍선 렌더링 스타일. 데이터(style 문자열)와 렌더링 방식을 분리해
@@ -107,6 +109,13 @@ export interface ToonBubble {
   /** STEP 7에서 추가 — 없으면 렌더러의 기본값을 사용한다. */
   font_size?: number;
   style?: ToonBubbleStyle;
+  /**
+   * Speech bubble tail 렌더링 스위치 — additive optional field, migration 없음.
+   * 기존(레거시) bubble은 tail_direction 값이 있어도 이 필드가 undefined이므로
+   * true가 아니면 tail을 그리지 않는다("Legacy Tail Protection"). 사용자가
+   * Editor에서 명시적으로 켠 경우에만 true로 저장된다.
+   */
+  tail_enabled?: boolean;
 }
 
 export interface ToonDialogueItem {

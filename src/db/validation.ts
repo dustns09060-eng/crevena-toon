@@ -17,6 +17,8 @@ export const ToonBubbleTailDirectionSchema = z.enum([
   "bottom-right",
   "top-left",
   "top-right",
+  "left",
+  "right",
   "none",
 ]);
 
@@ -34,6 +36,7 @@ export const ToonBubbleSchema = z
     tail_direction: ToonBubbleTailDirectionSchema,
     font_size: z.number().min(8).max(96).optional(),
     style: ToonBubbleStyleSchema.optional(),
+    tail_enabled: z.boolean().optional(),
   })
   .refine((b) => b.x + b.width <= 1, {
     message: "x + width는 1을 초과할 수 없습니다 (말풍선이 이미지 오른쪽 밖으로 나감)",
