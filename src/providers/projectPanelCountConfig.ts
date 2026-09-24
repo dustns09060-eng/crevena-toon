@@ -8,6 +8,8 @@
  */
 export const PROJECT_TOTAL_PANEL_COUNT_MIN = 2;
 export const PROJECT_TOTAL_PANEL_COUNT_MAX = 20;
+/** New projects only; saved projects always retain their own panel_count. */
+export const PROJECT_DEFAULT_PANEL_COUNT = 11;
 
 /** 한 프로젝트(에피소드)에 표지가 있을 때, 본문 컷 수의 허용 범위. */
 export const PROJECT_SCENE_COUNT_MIN_WITH_COVER = PROJECT_TOTAL_PANEL_COUNT_MIN - 1;

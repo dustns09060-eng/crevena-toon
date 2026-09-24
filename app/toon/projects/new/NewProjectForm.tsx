@@ -6,6 +6,7 @@ import { generateIdeasAction } from "../../../../lib/projects/ideas";
 import { createSeriesAction } from "../../../../lib/series/actions";
 import {
   MAX_CHARACTERS_PER_PANEL,
+  PROJECT_DEFAULT_PANEL_COUNT,
   PROJECT_TOTAL_PANEL_COUNT_MAX,
   PROJECT_TOTAL_PANEL_COUNT_MIN,
 } from "../../../../src/providers/projectPanelCountConfig";
@@ -46,7 +47,7 @@ export default function NewProjectForm({
   const [selectedIdeaIndex, setSelectedIdeaIndex] = useState<number | null>(null);
   const [ideaError, setIdeaError] = useState<string | null>(null);
   const [ideaPending, startIdeaTransition] = useTransition();
-  const [panelCount, setPanelCount] = useState(6);
+  const [panelCount, setPanelCount] = useState(PROJECT_DEFAULT_PANEL_COUNT);
 
   const [seriesList, setSeriesList] = useState<SeriesOption[]>(series);
   const [seriesCharMap, setSeriesCharMap] = useState<Record<string, string[]>>(seriesCharacterIds);

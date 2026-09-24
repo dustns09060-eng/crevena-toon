@@ -6,6 +6,7 @@ import { getSeriesLocations } from "../../../../lib/series/service";
 import { getProjectLocations } from "../../../../lib/projects/projectLocations";
 import StoryboardEditor from "./StoryboardEditor";
 import ProjectStageNav from "./ProjectStageNav";
+import Link from "next/link";
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -41,6 +42,13 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
       </div>
 
       <ProjectStageNav projectId={id} active="storyboard" imagesEnabled={imagesEnabled} />
+
+      {project.panel_count === 11 && project.status !== "completed" && (
+        <div className="card">
+          <Link className="btn btn-primary" href={`/toon/projects/${id}/external`}>외부 이미지로 제작</Link>
+          <p className="hint">AI 호출 없이 표지 1장과 본문 10장을 가져옵니다. 기존 이미지는 자동 교체하지 않습니다.</p>
+        </div>
+      )}
 
       <StoryboardEditor
         project={project}

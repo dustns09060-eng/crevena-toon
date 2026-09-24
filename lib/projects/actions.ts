@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "../supabase/server";
 import { validateProjectForm } from "./formValidation";
 import * as projectService from "./service";
+import { PROJECT_DEFAULT_PANEL_COUNT } from "../../src/providers/projectPanelCountConfig";
 
 export interface CreateProjectState {
   ok: boolean;
@@ -31,7 +32,7 @@ export async function createProjectAction(
   const raw = {
     title: String(formData.get("title") ?? ""),
     topic: String(formData.get("topic") ?? ""),
-    panel_count: Number(formData.get("panel_count") ?? 8),
+    panel_count: Number(formData.get("panel_count") ?? PROJECT_DEFAULT_PANEL_COUNT),
     character_ids: formData.getAll("character_ids").map(String),
     series_id: seriesIdRaw.length > 0 ? seriesIdRaw : null,
   };

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import type { EditorPanelData } from "../../../../../lib/projects/editor";
 import { saveBubbleLayoutAction, saveCoverLayoutAction, saveFinalRenderAction } from "../../../../../lib/projects/editor";
 import {
@@ -24,6 +25,7 @@ import {
   type RenderedForeground,
 } from "../../../../../lib/editor/renderPanel";
 import { scaleFontSizeToForeground } from "../../../../../lib/editor/containFit";
+import { renderPanelsInOrder } from "../../../../../lib/editor/batchRender";
 import { getFinalImageDimensions } from "../../../../../src/providers/finalImageConfig";
 import type { ProjectCharacterContext } from "../../../../../lib/projects/service";
 import type { ToonBubbleStyle, ToonBubbleTailDirection } from "../../../../../src/db/types";
@@ -52,10 +54,12 @@ const TAIL_DIRECTION_LABELS: Record<Exclude<ToonBubbleTailDirection, "none">, st
 };
 
 export default function EditorClient({
+  projectId,
   initialPanels,
   characters,
   initialPanelIndex = 0,
 }: {
+  projectId: string;
   initialPanels: EditorPanelData[];
   characters: ProjectCharacterContext[];
   initialPanelIndex?: number;
@@ -68,6 +72,10 @@ export default function EditorClient({
   const [selection, setSelection] = useState<Selection>(null);
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [batchRendering, setBatchRendering] = useState(false);
+  const [batchFailed, setBatchFailed] = useState<number[]>([]);
+  const [batchCompleted, setBatchCompleted] = useState<Set<string>>(() => new Set(initialPanels.filter((p) => p.hasFinalImage).map((p) => p.id)));
+  const batchLock = useRef(false);
   const [message, setMessage] = useState<string | null>(null);
   const [finalPreviewUrl, setFinalPreviewUrl] = useState<string | null>(null);
   const [foregroundRect, setForegroundRect] = useState<RenderedForeground | null>(null);
@@ -89,9 +97,10 @@ export default function EditorClient({
   function updatePanel(panelId: string, updater: (p: EditorPanelData) => EditorPanelData) {
     setPanels((prev) => prev.map((p) => (p.id === panelId ? updater(p) : p)));
     setDirty((prev) => ({ ...prev, [panelId]: true }));
+    setBatchCompleted((prev) => { const next = new Set(prev); next.delete(panelId); return next; });
   }
 
-  // STEP 7 §8 — 미리보기용 canvas를 최종 해상도(1080x1080)로 그리고
+  // STEP 7 §8 — 미리보기용 canvas를 최종 해상도로 그리고
   // CSS로만 축소 표시한다. 이렇게 하면 "최종 이미지 만들기"가 호출하는
   // renderPanelToCanvas()와 완전히 동일한 계산을 그대로 재사용하므로
   // 미리보기와 실제 결과가 어긋날 수 없다.
@@ -160,6 +169,18 @@ export default function EditorClient({
       ...p,
       dialogue: p.dialogue.map((d) => (d.id === itemId ? { ...d, text } : d)),
     }));
+  }
+
+  function addDialogue() {
+    if (!characters[0]) { setMessage("대사를 넣으려면 캐릭터를 먼저 등록해주세요."); return; }
+    updatePanel(panel.id, (p) => ({ ...p, dialogue: [...p.dialogue, {
+      id: crypto.randomUUID(), character_id: characters[0].id, text: "대사를 입력하세요",
+      bubble_type: "speech", bubble: getDefaultBubbleForIndex(p.dialogue.length),
+    }] }));
+  }
+
+  function removeDialogue(id: string) {
+    updatePanel(panel.id, (p) => ({ ...p, dialogue: p.dialogue.filter((item) => item.id !== id) }));
   }
 
   function handleCharacterChange(itemId: string, characterId: string) {
@@ -404,8 +425,9 @@ export default function EditorClient({
       const blob = await canvasToPngBlob(canvasRef.current);
       const file = new File([blob], "final.png", { type: "image/png" });
       const result = await saveFinalRenderAction(panel.id, file);
-      if (result.ok && result.signedUrl) {
-        setFinalPreviewUrl(result.signedUrl);
+      if (result.ok) {
+        setFinalPreviewUrl(result.signedUrl ?? null);
+        setBatchCompleted((prev) => new Set(prev).add(panel.id));
         setMessage("최종 이미지를 만들었습니다.");
       } else {
         setMessage(result.message ?? "최종 이미지 생성에 실패했습니다.");
@@ -413,6 +435,40 @@ export default function EditorClient({
     } finally {
       setRendering(false);
     }
+  }
+
+  async function handleBatchRender() {
+    if (batchLock.current) return;
+    if (Object.values(dirty).some(Boolean)) {
+      setMessage("저장하지 않은 내용이 있습니다. 각 컷을 저장한 뒤 전체 이미지를 만드세요.");
+      return;
+    }
+    batchLock.current = true;
+    setBatchRendering(true);
+    setBatchFailed([]);
+    setMessage(null);
+    try {
+      const result = await renderPanelsInOrder(panels, batchCompleted, async (target) => {
+        if (!target.rawImageSignedUrl) throw new Error("원본 이미지가 없습니다.");
+        let url = objectUrlCache.current.get(target.id);
+        if (!url) { url = await fetchAsObjectUrl(target.rawImageSignedUrl); objectUrlCache.current.set(target.id, url); }
+        const canvas = document.createElement("canvas");
+        await renderPanelToCanvas(canvas, {
+          imageObjectUrl: url, panelType: target.panelType, dialogue: target.dialogue,
+          narration: target.narration, narrationBubble: target.narrationBubble,
+          coverTitle: target.coverTitle, coverSubtitle: target.coverSubtitle,
+          coverTitleBubble: target.coverTitleBubble, width: dims.width, height: dims.height,
+        });
+        const blob = await canvasToPngBlob(canvas);
+        const saved = await saveFinalRenderAction(target.id, new File([blob], "final.png", { type: "image/png" }));
+        if (!saved.ok) throw new Error(saved.message ?? "최종 이미지 저장에 실패했습니다.");
+      });
+      setBatchCompleted(result.completedIds);
+      setBatchFailed(result.failed);
+      setMessage(result.failed.length
+        ? `실패한 컷: ${result.failed.join(", ")}. 성공한 컷은 그대로 유지됩니다.`
+        : `${panels.length}장 최종 이미지가 준비되었습니다. Final 페이지에서 ZIP을 받으세요.`);
+    } finally { setBatchRendering(false); batchLock.current = false; }
   }
 
   if (!panel) return <p>편집할 컷이 없습니다.</p>;
@@ -427,7 +483,7 @@ export default function EditorClient({
             className={`btn ${i === currentIndex ? "btn-primary" : ""}`}
             onClick={() => goToPanel(i)}
           >
-            {p.panelNumber}컷{dirty[p.id] ? " *" : ""}
+            {p.panelType === "cover" ? "Cover" : `${p.panelNumber - (panels[0]?.panelType === "cover" ? 1 : 0)}컷`}{dirty[p.id] ? " *" : ""}
           </button>
         ))}
       </div>
@@ -617,6 +673,7 @@ export default function EditorClient({
               rows={2}
             />
           </div>
+          <button type="button" className="btn" onClick={() => removeDialogue(item.id)}>대사 삭제</button>
           <div className="field">
             <label>캐릭터</label>
             <select
@@ -713,6 +770,8 @@ export default function EditorClient({
         </div>
       ))}
 
+      <button type="button" className="btn" onClick={addDialogue}>대사 추가</button>
+
       <h3 style={{ fontSize: 14 }}>내레이션</h3>
       <div className="card" onClick={() => panel.narrationBubble && setSelection({ kind: "narration" })}>
         <div className="field">
@@ -756,10 +815,22 @@ export default function EditorClient({
         <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? "저장 중..." : "저장"}
         </button>
-        <button type="button" className="btn btn-primary" onClick={handleFinalRender} disabled={rendering}>
+        <button type="button" className="btn btn-primary" onClick={handleFinalRender} disabled={rendering || batchRendering}>
           {rendering ? "만드는 중..." : "최종 이미지 만들기"}
         </button>
+        <button type="button" className="btn btn-primary" onClick={handleBatchRender} disabled={rendering || batchRendering}>
+          {batchRendering ? "순서대로 만드는 중..." : batchFailed.length ? "실패한 컷만 다시 만들기" : "전체 최종 이미지 만들기"}
+        </button>
+        {batchCompleted.size === panels.length && <Link className="btn" href={`/toon/projects/${projectId}/final`}>최종 이미지·ZIP 확인</Link>}
       </div>
+
+      {(batchCompleted.size > 0 || batchFailed.length > 0) && (
+        <div role="status" className="card" style={{ display: "grid", gap: 4 }}>
+          {panels.map((p) => <span key={p.id}>
+            {p.panelType === "cover" ? "Cover" : String(p.panelNumber - (panels[0]?.panelType === "cover" ? 1 : 0)).padStart(2, "0")}: {batchCompleted.has(p.id) ? "PASS" : batchFailed.includes(p.panelNumber) ? "FAIL" : "대기"}
+          </span>)}
+        </div>
+      )}
 
       {finalPreviewUrl && (
         <div className="card">

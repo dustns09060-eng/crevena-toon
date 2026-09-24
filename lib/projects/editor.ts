@@ -44,6 +44,7 @@ export interface EditorPanelData {
   panelNumber: number;
   panelType: ToonPanelType;
   rawImageSignedUrl: string | null;
+  hasFinalImage: boolean;
   dialogue: ToonDialogueItem[];
   narration: string | null;
   narrationBubble: ToonNarrationBubble | null;
@@ -102,6 +103,7 @@ export async function getPanelEditorData(projectId: string): Promise<EditorProje
       panelNumber: panel.panel_number,
       panelType: panel.panel_type,
       rawImageSignedUrl: signedUrl,
+      hasFinalImage: Boolean(panel.image_url),
       dialogue,
       narration: panel.narration,
       narrationBubble,

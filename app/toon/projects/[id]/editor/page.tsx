@@ -59,7 +59,7 @@ export default async function PanelEditorPage({
       <div className="topbar">
         <h1>{project.title} — 말풍선 편집</h1>
       </div>
-      <EditorClient initialPanels={editorData.panels} characters={characters} initialPanelIndex={initialPanelIndex} />
+      <EditorClient projectId={id} initialPanels={editorData.panels} characters={characters} initialPanelIndex={initialPanelIndex} />
     </main>
   );
 }
