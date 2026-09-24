@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -171,6 +171,136 @@ describe("geminiStoryboardProvider.generateStoryboard — 빈 응답(response.te
       geminiStoryboardProvider.generateStoryboard({ topic: "소재", panelCount: 2, characters: baseCharacters, locations: [] })
     ).rejects.toThrow();
     expect(generateContentMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("geminiStoryboardProvider.generateStoryboard — 503/UNAVAILABLE 재시도", () => {
+  const input = { topic: "소재", panelCount: 2, characters: baseCharacters, locations: [] };
+  const unavailable = () => Object.assign(new Error("private provider metadata"), { status: 503, code: "UNAVAILABLE" });
+  const success = () => makeResponse({ text: VALID_STORYBOARD_JSON });
+  let sleep: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.GEMINI_API_KEY = "test-key";
+    sleep = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  test("첫 요청 성공: API 1회, backoff 없음", async () => {
+    generateContentMock.mockResolvedValueOnce(success());
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    expect((await createGeminiStoryboardProvider({ sleep }).generateStoryboard(input)).title).toBe("제목");
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  test("503 → 성공: API 2회, 1초 backoff", async () => {
+    generateContentMock.mockRejectedValueOnce(unavailable()).mockResolvedValueOnce(success());
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await createGeminiStoryboardProvider({ sleep }).generateStoryboard(input);
+    expect(generateContentMock).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(1000);
+    expect(console.error).toHaveBeenCalledWith("[storyboard] Gemini 일시적 오류", expect.objectContaining({
+      provider: "gemini", operation: "storyboard", attempt: 1,
+      httpStatus: 503, retry: true, finalFailure: false,
+    }));
+  });
+
+  test("503 → 503 → 성공: API 3회, 1초/2초 backoff", async () => {
+    generateContentMock.mockRejectedValueOnce(unavailable()).mockRejectedValueOnce(unavailable()).mockResolvedValueOnce(success());
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await createGeminiStoryboardProvider({ sleep }).generateStoryboard(input);
+    expect(generateContentMock).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[1000], [2000]]);
+  });
+
+  test("503 3회: 안전한 사용자 오류, 마지막 호출 뒤 대기 없음", async () => {
+    generateContentMock.mockRejectedValue(unavailable());
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await expect(createGeminiStoryboardProvider({ sleep }).generateStoryboard(input)).rejects.toThrow(
+      "현재 AI 요청이 일시적으로 많아 스토리보드를 생성하지 못했습니다."
+    );
+    expect(generateContentMock).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[1000], [2000]]);
+    expect(console.error).toHaveBeenLastCalledWith("[storyboard] Gemini 일시적 오류", expect.objectContaining({
+      attempt: 3, httpStatus: 503, retry: false, finalFailure: true,
+    }));
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("private provider metadata");
+  });
+
+  test("SDK 0.15 ServerError 문자열 fallback으로 503을 판별한다", async () => {
+    generateContentMock.mockRejectedValueOnce(Object.assign(
+      new Error('got status: 503 Service Unavailable. {"error":{"code":503,"status":"UNAVAILABLE"}}'),
+      { name: "ServerError" }
+    )).mockResolvedValueOnce(success());
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await createGeminiStoryboardProvider({ sleep }).generateStoryboard(input);
+    expect(generateContentMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("구조화된 UNAVAILABLE status만 있어도 재시도한다", async () => {
+    generateContentMock.mockRejectedValueOnce(Object.assign(new Error("provider failure"), { status: "UNAVAILABLE" }))
+      .mockResolvedValueOnce(success());
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await createGeminiStoryboardProvider({ sleep }).generateStoryboard(input);
+    expect(generateContentMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("Retry-After를 우선하고 최대 5초로 제한한다", async () => {
+    generateContentMock.mockRejectedValueOnce(Object.assign(unavailable(), { headers: { "Retry-After": "120" } }))
+      .mockResolvedValueOnce(success());
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await createGeminiStoryboardProvider({ sleep }).generateStoryboard(input);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(5000);
+  });
+
+  test.each([400, 401, 403, 429])("HTTP %i는 재시도하지 않는다", async (status) => {
+    generateContentMock.mockRejectedValueOnce(Object.assign(new Error("raw secret"), { status, code: "UNAVAILABLE" }));
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await expect(createGeminiStoryboardProvider({ sleep }).generateStoryboard(input)).rejects.toThrow(
+      "AI 서비스 요청에 실패했습니다."
+    );
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  test("429 수치 코드가 있으면 UNAVAILABLE 문자열이 있어도 재시도하지 않는다", async () => {
+    generateContentMock.mockRejectedValueOnce(Object.assign(new Error("provider failure"), {
+      status: "UNAVAILABLE", code: 429,
+    }));
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await expect(createGeminiStoryboardProvider({ sleep }).generateStoryboard(input)).rejects.toThrow(/AI 서비스 요청/);
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("PROHIBITED_CONTENT 응답은 503 재시도와 무관하게 1회에 중단한다", async () => {
+    generateContentMock.mockResolvedValueOnce(makeResponse({ finishReason: "PROHIBITED_CONTENT" }));
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await expect(createGeminiStoryboardProvider({ sleep }).generateStoryboard(input)).rejects.toThrow(/안전 정책/);
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  test("malformed JSON과 Zod 실패는 각각 재시도하지 않는다", async () => {
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    generateContentMock.mockResolvedValueOnce(makeResponse({ text: "{" }));
+    await expect(createGeminiStoryboardProvider({ sleep }).generateStoryboard(input)).rejects.toThrow(/JSON/);
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+    generateContentMock.mockResolvedValueOnce(makeResponse({ text: JSON.stringify({ title: "bad" }) }));
+    await expect(createGeminiStoryboardProvider({ sleep }).generateStoryboard(input)).rejects.toThrow(/형식/);
+    expect(generateContentMock).toHaveBeenCalledTimes(2);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  test("empty response와 503이 섞여도 총 API 3회를 넘지 않는다", async () => {
+    generateContentMock.mockResolvedValueOnce(makeResponse({ finishReason: "STOP" }))
+      .mockRejectedValueOnce(unavailable()).mockRejectedValueOnce(unavailable());
+    const { createGeminiStoryboardProvider } = await import("../../src/providers/geminiStoryboardProvider");
+    await expect(createGeminiStoryboardProvider({ sleep }).generateStoryboard(input)).rejects.toThrow(/현재 AI 요청/);
+    expect(generateContentMock).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[2000]]);
   });
 });
 
