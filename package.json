@@ -10,6 +10,7 @@
     "lint": "eslint app lib src tests",
     "typecheck": "tsc --noEmit -p tsconfig.scripts.json && tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "check": "npm test && npm run lint && npm run typecheck && npm run build",
     "build": "tsc -p tsconfig.scripts.json && next build"
   },
   "dependencies": {

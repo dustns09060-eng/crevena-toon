@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Crevena 인스타툰 캐릭터",
-  description: "인스타툰에 등장할 나만의 캐릭터를 등록하고 관리합니다.",
+  title: "Crevena Toon",
+  description: "캐릭터 등록부터 스토리보드, 이미지 편집과 다운로드까지 이어지는 인스타툰 제작 도구",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

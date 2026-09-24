@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@supabase/supabase-js";
+import { requireSupabasePublicConfig } from "../config/runtime";
 
 /**
  * service_role 클라이언트 — RLS를 완전히 우회한다.
@@ -11,10 +12,10 @@ import { createClient } from "@supabase/supabase-js";
  * `server-only` 패키지가 빌드를 실패시켜 실수 유입을 막는다.
  */
 export function createAdminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const { url } = requireSupabasePublicConfig();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY 또는 SUPABASE URL이 설정되지 않았습니다.");
+  if (!serviceRoleKey) {
+    throw new Error("서비스 설정이 필요합니다: SUPABASE_SERVICE_ROLE_KEY");
   }
   return createClient(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },

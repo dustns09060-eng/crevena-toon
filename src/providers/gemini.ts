@@ -3,7 +3,9 @@ import fs from "node:fs";
 import type { CharacterBible, SceneDefinition } from "../types";
 import { buildScenePrompt, NO_KOREAN_TEXT_RULE } from "./promptBuilder";
 
-export const GEMINI_MODEL = process.env.GEMINI_IMAGE_MODEL ?? "gemini-2.5-flash-image";
+// 2026-09 기준 Stable 이미지 모델. 2.5 Flash Image는 신규 사용자에게
+// 더 이상 제공되지 않으므로 기본값으로 사용하면 첫 생성부터 404가 난다.
+export const GEMINI_MODEL = process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image";
 const MODEL = GEMINI_MODEL;
 
 export async function generateWithGemini(

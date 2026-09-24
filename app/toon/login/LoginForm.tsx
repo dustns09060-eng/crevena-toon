@@ -5,7 +5,7 @@ import { signInAction, type LoginState } from "../../../lib/auth/actions";
 
 const initialState: LoginState = { ok: true };
 
-export default function LoginForm() {
+export default function LoginForm({ disabled = false }: { disabled?: boolean }) {
   const [state, formAction, pending] = useActionState(signInAction, initialState);
 
   return (
@@ -29,8 +29,8 @@ export default function LoginForm() {
         />
       </div>
 
-      <button type="submit" className="btn btn-primary btn-block" disabled={pending}>
-        {pending ? "로그인 중..." : "로그인"}
+      <button type="submit" className="btn btn-primary btn-block" disabled={pending || disabled}>
+        {disabled ? "설정 후 로그인할 수 있어요" : pending ? "로그인 중..." : "로그인"}
       </button>
     </form>
   );
