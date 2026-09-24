@@ -172,6 +172,18 @@ describe("generateStoryboardAction", () => {
     expect(result.draft?.panels).toHaveLength(count);
   });
 
+  test("20장(표지 1 + 본문 19) 생성은 1개 draft만 반환하고 저장은 하지 않는다", async () => {
+    getProjectMock.mockResolvedValue({ ...OWNED_PROJECT, panel_count: 20 });
+    generateStoryboardMock.mockResolvedValue(makeRawStoryboard(20));
+    const { generateStoryboardAction } = await import("../../lib/projects/storyboard");
+    const result = await generateStoryboardAction("proj-1");
+    expect(result.ok).toBe(true);
+    expect(result.draft?.panels).toHaveLength(20);
+    expect(result.draft?.panels.map((p) => p.panel_number)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    expect(currentSupabase._calls["toon_projects.update"]).toBeUndefined();
+    expect(currentSupabase._calls["toon_panels.upsert"]).toBeUndefined();
+  });
+
   test("AI가 요청한 컷 수와 다른 개수를 반환하면 거부되고 DB를 건드리지 않는다", async () => {
     generateStoryboardMock.mockResolvedValue(makeRawStoryboard(5)); // 6컷 요청인데 5개 반환
     const { generateStoryboardAction } = await import("../../lib/projects/storyboard");
@@ -488,6 +500,21 @@ describe("regenerateStoryboardWithSettingsAction — 2-phase (검증/AI 먼저, 
     );
   });
 
+  test("Provider가 재시도 후 성공해도 검증 전 DB 쓰기 없이 단 한 번 저장한다", async () => {
+    let resolveProvider!: (raw: ReturnType<typeof makeRawStoryboard>) => void;
+    generateStoryboardMock.mockImplementationOnce(() => new Promise((resolve) => { resolveProvider = resolve; }));
+    const { regenerateStoryboardWithSettingsAction } = await import("../../lib/projects/storyboard");
+    const pending = regenerateStoryboardWithSettingsAction("proj-1", VALID_INPUT);
+    await vi.waitFor(() => expect(generateStoryboardMock).toHaveBeenCalledTimes(1));
+    expect(currentSupabase._calls["toon_projects.update"]).toBeUndefined();
+    expect(currentSupabase._calls["toon_panels.upsert"]).toBeUndefined();
+    resolveProvider(makeRawStoryboard(10));
+    expect((await pending).ok).toBe(true);
+    expect((currentSupabase._calls["toon_projects.update"] as Record<string, unknown>[])
+      .filter((payload) => payload.topic === VALID_INPUT.topic)).toHaveLength(1);
+    expect(currentSupabase._calls["toon_panels.upsert"]).toHaveLength(1);
+  });
+
   test("타인 프로젝트는 수정할 수 없다", async () => {
     getProjectMock.mockResolvedValue(null);
     const { regenerateStoryboardWithSettingsAction } = await import("../../lib/projects/storyboard");
@@ -558,6 +585,23 @@ describe("regenerateStoryboardWithSettingsAction — 2-phase (검증/AI 먼저, 
     expect(currentSupabase._calls["toon_project_characters.insert"]).toBeUndefined();
     expect(currentSupabase._calls["toon_project_characters.delete"]).toBeUndefined();
     // 기존 이미지(raw/final)도 Storage 정리 함수가 전혀 호출되지 않아 그대로 보존된다.
+    expect(cleanupProjectStorageMock).not.toHaveBeenCalled();
+  });
+
+  test("최종 503 실패는 안전한 메시지를 표시하고 기존 project/panel/이미지를 보존한다", async () => {
+    getProjectPanelsMock.mockResolvedValue([
+      { panel_number: 1, panel_type: "cover", raw_image_url: "raw/cover.png", image_url: "final/cover.png" },
+    ]);
+    generateStoryboardMock.mockRejectedValueOnce(new Error(
+      "현재 AI 요청이 일시적으로 많아 스토리보드를 생성하지 못했습니다. 잠시 후 다시 시도해주세요."
+    ));
+    const { regenerateStoryboardWithSettingsAction } = await import("../../lib/projects/storyboard");
+    const result = await regenerateStoryboardWithSettingsAction("proj-1", VALID_INPUT);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/현재 AI 요청이 일시적으로 많아/);
+    expect(currentSupabase._calls["toon_projects.update"]).toBeUndefined();
+    expect(currentSupabase._calls["toon_panels.upsert"]).toBeUndefined();
+    expect(currentSupabase._calls["toon_panels.delete"]).toBeUndefined();
     expect(cleanupProjectStorageMock).not.toHaveBeenCalled();
   });
 
