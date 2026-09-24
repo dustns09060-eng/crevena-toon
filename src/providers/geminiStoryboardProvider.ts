@@ -17,11 +17,74 @@ import {
 
 export const GEMINI_STORY_MODEL = process.env.GEMINI_STORY_MODEL ?? "gemini-3.6-flash";
 
-/**
- * 응답이 비었을 때(response.text === undefined) 최초 시도를 포함해 최대
- * 몇 번까지 시도할지. 2 = 최초 1회 + 재시도 1회.
- */
+// 503과 빈 응답은 이 하나의 상한을 공유한다. 빈 응답만 연속되면 기존과
+// 동일하게 최초 1회 + 재시도 1회까지만 허용한다.
+const MAX_PROVIDER_ATTEMPTS = 3;
 const MAX_EMPTY_RESPONSE_ATTEMPTS = 2;
+const MAX_RETRY_DELAY_MS = 5_000;
+const STORYBOARD_UNAVAILABLE_MESSAGE =
+  "현재 AI 요청이 일시적으로 많아 스토리보드를 생성하지 못했습니다. 잠시 후 다시 시도해주세요.";
+
+type RetryOptions = { sleep?: (ms: number) => Promise<void> };
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+function getHeader(headers: unknown, name: string): unknown {
+  const record = asRecord(headers);
+  if (!record) return undefined;
+  if (typeof record.get === "function") return record.get(name);
+  return record[name] ?? record[name.toLowerCase()];
+}
+
+function retryDelayMs(error: unknown, attempt: number): number {
+  const e = asRecord(error);
+  const response = asRecord(e?.response);
+  const header = getHeader(e?.headers ?? response?.headers, "Retry-After");
+  // SDK 0.15.0의 ServerError에는 응답 header가 노출되지 않는다. 차후
+  // 노출되거나 구조화된 retryDelay가 제공되면 짧은 범위에서 우선 사용한다.
+  const retryInfo = Array.isArray(e?.details)
+    ? e.details.map(asRecord).find((detail) => detail?.retryDelay != null)
+    : undefined;
+  const delay = e?.retryDelay ?? retryInfo?.retryDelay;
+  let seconds: number | undefined;
+  if (typeof header === "string") {
+    const numeric = Number(header);
+    seconds = Number.isFinite(numeric) ? numeric : (Date.parse(header) - Date.now()) / 1000;
+  } else if (typeof delay === "string" && /^\d+(?:\.\d+)?s$/.test(delay)) {
+    seconds = Number(delay.slice(0, -1));
+  } else if (typeof delay === "number") {
+    seconds = delay / 1000;
+  }
+  if (seconds !== undefined && Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.ceil(seconds * 1000), MAX_RETRY_DELAY_MS);
+  }
+  return 1_000 * 2 ** (attempt - 1);
+}
+
+function unavailableErrorStatus(error: unknown): { retryable: boolean; httpStatus?: number; status?: string } {
+  const e = asRecord(error);
+  const nested = asRecord(e?.error);
+  const response = asRecord(e?.response);
+  const codes = [e?.statusCode, e?.status, e?.code, response?.status, nested?.code];
+  const numericCode = codes.find((code) => typeof code === "number" || typeof code === "string" && /^\d{3}$/.test(code));
+  const httpStatus = numericCode !== undefined ? Number(numericCode) : undefined;
+  const status = typeof e?.status === "string" && !/^\d{3}$/.test(e.status) ? e.status
+    : typeof nested?.status === "string" ? nested.status : undefined;
+  if (httpStatus !== undefined || status !== undefined) {
+    return { retryable: httpStatus === 503 || (httpStatus === undefined && status === "UNAVAILABLE"), httpStatus, status };
+  }
+  // @google/genai 0.15.0의 ServerError는 status 필드를 보존하지 않고
+  // `got status: 503 ... {"error":...}` 문자열만 제공한다. 그 경우에만
+  // SDK가 생성한 명확한 HTTP 503 접두부를 fallback으로 확인한다.
+  const message = error instanceof Error ? error.message : undefined;
+  if (e?.name === "ServerError" && message && /^got status: 503\b/.test(message)) {
+    return { retryable: true, httpStatus: 503, status: "UNAVAILABLE" };
+  }
+  return { retryable: false };
+}
 
 /**
  * finishReason이 이 목록에 있으면 "일시적 문제가 아니라 명확한 정책적
@@ -328,7 +391,8 @@ function buildIdentifiedLocationContextText(locations: StoryboardIdentifiedLocat
     .join("\n");
 }
 
-export const geminiStoryboardProvider: StoryboardProvider = {
+export function createGeminiStoryboardProvider({ sleep = defaultSleep }: RetryOptions = {}): StoryboardProvider {
+  return {
   id: "gemini",
 
   async generateIdeas(input: GenerateIdeasInput): Promise<StoryIdea[]> {
@@ -396,7 +460,7 @@ ${input.topic}
       },
     };
 
-    // response.text가 비어 있는 경우에만 최대 1회 재시도한다. 실제
+    // response.text가 비어 있는 경우에는 최대 1회 재시도한다. 실제
     // 재현 결과 원인은 두 가지로 나뉜다:
     // (1) finishReason이 STOP처럼 일시적/불명확한데 content.parts가
     //     비어 있는 경우 — 재시도하면 성공하는 경우가 많았다.
@@ -407,13 +471,34 @@ ${input.topic}
     // JSON 파싱 실패나 zod 검증 실패는 이 재시도 대상이 아니다 —
     // 아래에서 텍스트를 확보한 뒤 딱 한 번만 파싱/검증한다.
     let text: string | undefined;
-    for (let attempt = 1; attempt <= MAX_EMPTY_RESPONSE_ATTEMPTS; attempt++) {
-      const response = await ai.models.generateContent(requestConfig);
+    let emptyResponses = 0;
+    for (let attempt = 1; attempt <= MAX_PROVIDER_ATTEMPTS; attempt++) {
+      let response;
+      try {
+        response = await ai.models.generateContent(requestConfig);
+      } catch (error) {
+        const { retryable, httpStatus, status } = unavailableErrorStatus(error);
+        if (!retryable) {
+          // SDK의 원본 오류에는 내부 응답 정보가 들어갈 수 있으므로 화면에는
+          // 전달하지 않는다. 정책/형식 검사 오류는 이 catch 바깥에 있다.
+          throw new Error("AI 서비스 요청에 실패했습니다. 잠시 후 다시 시도해주세요.");
+        }
+        const retry = attempt < MAX_PROVIDER_ATTEMPTS;
+        console.error("[storyboard] Gemini 일시적 오류", {
+          provider: "gemini", operation: "storyboard", attempt,
+          httpStatus: httpStatus ?? 503, status: status ?? "UNAVAILABLE",
+          retry, finalFailure: !retry,
+        });
+        if (!retry) throw new Error(STORYBOARD_UNAVAILABLE_MESSAGE);
+        await sleep(retryDelayMs(error, attempt));
+        continue;
+      }
       if (response.text) {
         text = response.text;
         break;
       }
 
+      emptyResponses++;
       const finishReason = response.candidates?.[0]?.finishReason;
       console.error(
         "[storyboard] Gemini 응답이 비어 있습니다(response.text 없음)",
@@ -425,8 +510,8 @@ ${input.topic}
           "AI가 안전 정책 등의 이유로 스토리보드를 생성하지 못했습니다. 소재를 조금 다르게 표현해 다시 시도해주세요."
         );
       }
-      // 재시도 가능한 이유(STOP/MAX_TOKENS/OTHER/불명)면 루프를 이어간다.
-      // 마지막 시도에서도 비어 있으면 루프 종료 후 아래에서 최종 실패 처리.
+      // 빈 응답의 기존 2회 상한과 provider 전체 3회 상한을 함께 적용한다.
+      if (emptyResponses >= MAX_EMPTY_RESPONSE_ATTEMPTS) break;
     }
     if (!text) throw new Error("AI 스토리보드 응답이 비어 있습니다. 잠시 후 다시 시도해주세요.");
 
@@ -449,4 +534,7 @@ ${input.topic}
     }
     return parsed.data;
   },
-};
+  };
+}
+
+export const geminiStoryboardProvider = createGeminiStoryboardProvider();
