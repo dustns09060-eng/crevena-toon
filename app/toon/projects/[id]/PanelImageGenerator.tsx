@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import {
   approvePanelImageAction,
@@ -46,6 +46,8 @@ export default function PanelImageGenerator({
   const [runningAll, setRunningAll] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [readinessErrors] = useState(initialReadinessErrors);
+  const generatingPanelsRef = useRef(new Set<string>());
+  const generateAllRef = useRef(false);
 
   // 021 — Storyboard 전체 재생성 없이 기존(확정된) 컷의 Location/Time of
   // Day만 직접 지정/수정한다. 저장 후 "이 컷 다시 만들기"로 새
@@ -93,6 +95,8 @@ export default function PanelImageGenerator({
   const allApproved = panels.length > 0 && approvedCount === panels.length;
 
   async function generateOne(panelId: string): Promise<boolean> {
+    if (generatingPanelsRef.current.has(panelId)) return false;
+    generatingPanelsRef.current.add(panelId);
     setStatusByPanel((prev) => ({ ...prev, [panelId]: "generating" }));
     setErrorByPanel((prev) => {
       const next = { ...prev };
@@ -100,19 +104,25 @@ export default function PanelImageGenerator({
       return next;
     });
 
-    const result = await generatePanelImageAction(panelId);
-    if (result.ok && result.image) {
-      setImages((prev) => ({ ...prev, [panelId]: { ...prev[panelId], candidate: result.image } }));
-      setStatusByPanel((prev) => ({ ...prev, [panelId]: "idle" }));
-      return true;
-    }
+    try {
+      const result = await generatePanelImageAction(panelId);
+      if (result.ok && result.image) {
+        setImages((prev) => ({ ...prev, [panelId]: { ...prev[panelId], candidate: result.image } }));
+        setStatusByPanel((prev) => ({ ...prev, [panelId]: "idle" }));
+        return true;
+      }
 
-    setStatusByPanel((prev) => ({ ...prev, [panelId]: "failed" }));
-    setErrorByPanel((prev) => ({ ...prev, [panelId]: result.message ?? "생성에 실패했습니다." }));
-    return false;
+      setStatusByPanel((prev) => ({ ...prev, [panelId]: "failed" }));
+      setErrorByPanel((prev) => ({ ...prev, [panelId]: result.message ?? "생성에 실패했습니다." }));
+      return false;
+    } finally {
+      generatingPanelsRef.current.delete(panelId);
+    }
   }
 
   async function handleGenerateAll() {
+    if (generateAllRef.current) return;
+    generateAllRef.current = true;
     setGlobalError(null);
     setRunningAll(true);
     try {
@@ -123,6 +133,7 @@ export default function PanelImageGenerator({
       }
     } finally {
       setRunningAll(false);
+      generateAllRef.current = false;
     }
   }
 
@@ -299,12 +310,38 @@ export default function PanelImageGenerator({
                 {error && <p className="error">{error}</p>}
 
                 {displayedImage?.signedUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={displayedImage.signedUrl}
-                    alt=""
-                    style={{ width: "100%", borderRadius: 12, border: "1px solid var(--color-border)" }}
-                  />
+                  <>
+                    {state.candidate && (
+                      <p className="hint" style={{ fontWeight: 700 }}>
+                        새 후보 이미지 · v{state.candidate.generationVersion}
+                      </p>
+                    )}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={displayedImage.signedUrl}
+                      alt={state.candidate ? "새 후보 이미지" : "승인된 이미지"}
+                      style={{ width: "100%", borderRadius: 12, border: "1px solid var(--color-border)" }}
+                    />
+                  </>
+                )}
+
+                {state.candidate && state.approved?.signedUrl && (
+                  <details style={{ marginTop: 10 }}>
+                    <summary className="hint" style={{ cursor: "pointer" }}>
+                      기존 승인 이미지와 비교
+                    </summary>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={state.approved.signedUrl}
+                      alt="기존 승인 이미지"
+                      style={{
+                        width: "100%",
+                        marginTop: 8,
+                        borderRadius: 12,
+                        border: "1px solid var(--color-border)",
+                      }}
+                    />
+                  </details>
                 )}
 
                 {state.candidate && (

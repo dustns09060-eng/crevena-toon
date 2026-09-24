@@ -8,6 +8,7 @@ import { getCharacterSheetProvider } from "../../src/providers/characterSheetPro
 import { buildCharacterSheetPrompt } from "../../src/providers/characterSheetPromptBuilder";
 import { getToonStyle } from "../../src/providers/characterSheetStyle";
 import { characterHasSavedBible, toBibleForPrompt } from "./bibleUtils";
+import { getGenerationErrorMessage } from "../projects/generationError";
 
 const REFERENCES_BUCKET = "toon-references";
 const SHEETS_BUCKET = "toon-character-sheets";
@@ -207,7 +208,10 @@ export async function generateCharacterSheetAction(characterId: string): Promise
       durationMs: Date.now() - startedAt,
       errorType: e instanceof Error ? e.constructor.name : "Unknown",
     });
-    return { ok: false, message: e instanceof Error ? e.message : "Character Sheet 생성 중 오류가 발생했습니다." };
+    return {
+      ok: false,
+      message: getGenerationErrorMessage(e, "Character Sheet 생성 중 오류가 발생했습니다."),
+    };
   } finally {
     inFlightGeneration.delete(characterId);
   }

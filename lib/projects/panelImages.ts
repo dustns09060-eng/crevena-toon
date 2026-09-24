@@ -15,6 +15,7 @@ import { getLocation } from "../locations/service";
 import { getProjectLocation } from "./projectLocations";
 import { buildPanelImageEditPrompt } from "../../src/providers/panelImageEditPromptBuilder";
 import type { ToonCharacter, ToonPanel, ToonProject, ToonTimeOfDay } from "../../src/db/types";
+import { getGenerationErrorMessage } from "./generationError";
 
 const REFERENCES_SHEET_BUCKET = "toon-character-sheets";
 const PANELS_BUCKET = "toon-panels";
@@ -335,7 +336,7 @@ export async function generatePanelImageAction(panelId: string): Promise<Generat
       durationMs: Date.now() - startedAt,
       errorType: e instanceof Error ? e.constructor.name : "Unknown",
     });
-    return { ok: false, message: e instanceof Error ? e.message : "이미지 생성 중 오류가 발생했습니다." };
+    return { ok: false, message: getGenerationErrorMessage(e, "이미지 생성 중 오류가 발생했습니다.") };
   } finally {
     inFlightPanelGeneration.delete(panelId);
   }
@@ -549,7 +550,7 @@ export async function editPanelImageAction(
     // provider 원문 오류/storage 경로 등 내부 정보를 그대로 노출하지
     // 않고, 이미 한국어로 다듬어진 Error.message만 그대로 전달한다
     // (이 함수 안의 모든 throw가 이미 사용자용 문구다).
-    return { ok: false, message: e instanceof Error ? e.message : "이미지 수정 중 오류가 발생했습니다." };
+    return { ok: false, message: getGenerationErrorMessage(e, "이미지 수정 중 오류가 발생했습니다.") };
   } finally {
     inFlightPanelGeneration.delete(panel.id);
   }
