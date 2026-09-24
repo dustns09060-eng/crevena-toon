@@ -455,8 +455,96 @@ a {
   border: 1px solid #2b6b3a;
 }
 
+.page-eyebrow {
+  margin: 0 0 4px;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.project-stage-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.project-stage-nav__item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+}
+
+.project-stage-nav__item.is-active {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface));
+  border-color: var(--color-primary);
+}
+
+.project-stage-nav__item.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.project-stage-nav__number {
+  display: inline-flex;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  background: var(--color-text-muted);
+  border-radius: 999px;
+}
+
+.project-stage-nav__item.is-active .project-stage-nav__number {
+  background: var(--color-primary);
+}
+
+.project-stage-nav__item strong,
+.project-stage-nav__item small {
+  display: block;
+}
+
+.project-stage-nav__item strong {
+  font-size: 14px;
+}
+
+.project-stage-nav__item small {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.workflow-intro h2,
+.workflow-next-step h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+
 @media (max-width: 400px) {
   .page {
     padding: 12px 12px 40px;
+  }
+
+  .project-stage-nav__item {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .project-stage-nav__number {
+    flex-basis: 24px;
+    width: 24px;
+    height: 24px;
   }
 }

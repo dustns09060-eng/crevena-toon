@@ -1,11 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "../../../../lib/supabase/server";
 import { getProject, getProjectCharacters, getProjectPanels } from "../../../../lib/projects/service";
-import { checkProjectGenerationReadiness, getPanelImagesSummary } from "../../../../lib/projects/panelImages";
 import { getCharacters } from "../../../../lib/characters/service";
 import { getSeriesLocations } from "../../../../lib/series/service";
 import { getProjectLocations } from "../../../../lib/projects/projectLocations";
 import StoryboardEditor from "./StoryboardEditor";
+import ProjectStageNav from "./ProjectStageNav";
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,26 +29,18 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   // 사용자는 직접 만들지 않고 Storyboard AI가 저장 시점에 채운다.
   const projectLocations = await getProjectLocations(supabase, id);
 
-  let panelImagesData = null;
-  if (project.status === "confirmed" && panels.length > 0) {
-    const readiness = await checkProjectGenerationReadiness(supabase, project, panels);
-    const summary = await getPanelImagesSummary(supabase, panels);
-    panelImagesData = {
-      readinessErrors: readiness.errors,
-      images: Object.fromEntries(
-        panels.map((p) => [
-          p.id,
-          { approved: summary.approvedByPanel[p.id], candidate: summary.candidateByPanel[p.id] },
-        ])
-      ),
-    };
-  }
+  const imagesEnabled = project.status === "confirmed" || project.status === "generating" || project.status === "failed";
 
   return (
     <main className="page">
       <div className="topbar">
-        <h1>{project.title}</h1>
+        <div>
+          <p className="page-eyebrow">스토리보드</p>
+          <h1>{project.title}</h1>
+        </div>
       </div>
+
+      <ProjectStageNav projectId={id} active="storyboard" imagesEnabled={imagesEnabled} />
 
       <StoryboardEditor
         project={project}
@@ -67,7 +59,6 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           distinctive_features: l.distinctive_features,
         }))}
         initialPanels={panels}
-        panelImagesData={panelImagesData}
       />
     </main>
   );

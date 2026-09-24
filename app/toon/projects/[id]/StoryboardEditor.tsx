@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
@@ -10,14 +11,12 @@ import {
 } from "../../../../lib/projects/storyboard";
 import type { StoryboardDraftPanel, StoryboardDraftTemporaryLocation } from "../../../../src/providers/storyboardMapper";
 import type { ProjectCharacterContext } from "../../../../lib/projects/service";
-import type { PanelImageView } from "../../../../lib/projects/panelImages";
 import type { ToonPanel, ToonProject } from "../../../../src/db/types";
 import {
   MAX_CHARACTERS_PER_PANEL,
   PROJECT_TOTAL_PANEL_COUNT_MAX,
   PROJECT_TOTAL_PANEL_COUNT_MIN,
 } from "../../../../src/providers/projectPanelCountConfig";
-import PanelImageGenerator from "./PanelImageGenerator";
 
 /** 022 — 이 프로젝트가 지금까지 정의한 Temporary Location(전체 정의). */
 export interface ProjectLocationOption {
@@ -115,7 +114,6 @@ export default function StoryboardEditor({
   allLocations,
   projectLocations,
   initialPanels,
-  panelImagesData,
 }: {
   project: ToonProject;
   characters: ProjectCharacterContext[];
@@ -124,10 +122,6 @@ export default function StoryboardEditor({
   /** 022 — 이 프로젝트가 지금까지 정의한 Temporary Location(전체). 사용자는 직접 관리하지 않고 읽기 전용 배지로만 노출한다. */
   projectLocations: ProjectLocationOption[];
   initialPanels: ToonPanel[];
-  panelImagesData: {
-    readinessErrors: string[];
-    images: Record<string, { approved?: PanelImageView; candidate?: PanelImageView }>;
-  } | null;
 }) {
   const router = useRouter();
   const [panels, setPanels] = useState<StoryboardDraftPanel[]>(() =>
@@ -724,26 +718,21 @@ export default function StoryboardEditor({
             </div>
           </div>
 
-          {status === "confirmed" && panelImagesData && (
-            <div className="card">
-              <h2 style={{ fontSize: 15, marginTop: 0 }}>컷 이미지</h2>
-              <PanelImageGenerator
-                panels={initialPanels}
-                initialImages={panelImagesData.images}
-                initialReadinessErrors={panelImagesData.readinessErrors}
-                allLocations={allLocations}
-                projectLocations={projectLocations}
-              />
-            </div>
-          )}
-
-          {status !== "confirmed" && (
-            <div className="card">
+          <div className="card workflow-next-step">
+            <h2>다음 단계: 이미지 컷</h2>
+            <p className="hint">
+              스토리보드를 확정하면 별도 화면에서 그림을 생성하고 사용할 컷을 선택할 수 있어요.
+            </p>
+            {status === "confirmed" ? (
+              <Link href={`/toon/projects/${project.id}/images`} className="btn btn-primary btn-block">
+                이미지 컷 만들기로 이동
+              </Link>
+            ) : (
               <button type="button" className="btn btn-block" disabled title="먼저 스토리보드를 확정해주세요">
-                컷 이미지 만들기 (스토리보드 확정 필요)
+                이미지 컷 만들기 (스토리보드 확정 필요)
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </>
       )}
     </div>

@@ -307,6 +307,7 @@ export async function generatePanelImageAction(panelId: string): Promise<Generat
     const { data: signed } = await supabase.storage.from(PANELS_BUCKET).createSignedUrl(storagePath, 3600);
 
     revalidatePath(`/toon/projects/${project.id}`);
+    revalidatePath(`/toon/projects/${project.id}/images`);
 
     return {
       ok: true,
@@ -517,6 +518,7 @@ export async function editPanelImageAction(
     const { data: signed } = await supabase.storage.from(PANELS_BUCKET).createSignedUrl(storagePath, 3600);
 
     revalidatePath(`/toon/projects/${project.id}`);
+    revalidatePath(`/toon/projects/${project.id}/images`);
 
     return {
       ok: true,
@@ -591,6 +593,7 @@ export async function approvePanelImageAction(
   if (panelUpdateErr) return { ok: false, message: "컷 정보 갱신에 실패했습니다." };
 
   revalidatePath(`/toon/projects/${owned.project.id}`);
+  revalidatePath(`/toon/projects/${owned.project.id}/images`);
   return { ok: true };
 }
 
@@ -639,6 +642,7 @@ export async function updatePanelLocationAction(
   if (error) return { ok: false, message: "장소/시간대 저장에 실패했습니다." };
 
   revalidatePath(`/toon/projects/${panel.project_id}`);
+  revalidatePath(`/toon/projects/${panel.project_id}/images`);
   return { ok: true };
 }
 

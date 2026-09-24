@@ -50,8 +50,17 @@ export default async function ProjectsPage() {
                       보기/다운로드
                     </Link>
                   ) : (
-                    <Link href={`/toon/projects/${p.id}`} className="btn">
-                      수정
+                    <Link
+                      href={
+                        p.status === "confirmed" || p.status === "generating" || p.status === "failed"
+                          ? `/toon/projects/${p.id}/images`
+                          : `/toon/projects/${p.id}`
+                      }
+                      className="btn"
+                    >
+                      {p.status === "confirmed" || p.status === "generating" || p.status === "failed"
+                        ? "이미지 컷"
+                        : "스토리보드"}
                     </Link>
                   )}
                   <DeleteProjectButton projectId={p.id} projectTitle={p.title} />
