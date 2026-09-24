@@ -216,6 +216,9 @@ export default function PanelImageGenerator({
             const state = images[panel.id] ?? {};
             const status = statusByPanel[panel.id] ?? "idle";
             const error = errorByPanel[panel.id];
+            // 새 후보가 생기면 기존 approved 이미지는 안전하게 유지하되,
+            // 사용자가 비교·승인할 수 있도록 후보를 화면에 우선 표시한다.
+            const displayedImage = state.candidate ?? state.approved;
 
             return (
               <div className="card" key={panel.id}>
@@ -282,10 +285,12 @@ export default function PanelImageGenerator({
                   상태:{" "}
                   {status === "generating"
                     ? "생성 중..."
-                    : state.approved
-                      ? "승인됨"
-                      : state.candidate
-                        ? "후보"
+                    : state.candidate
+                      ? state.approved
+                        ? "새 후보 확인 필요 (기존 승인본 유지 중)"
+                        : "후보"
+                      : state.approved
+                        ? "승인됨"
                         : status === "failed"
                           ? "실패"
                           : "대기"}
@@ -293,10 +298,10 @@ export default function PanelImageGenerator({
 
                 {error && <p className="error">{error}</p>}
 
-                {(state.approved ?? state.candidate)?.signedUrl && (
+                {displayedImage?.signedUrl && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={(state.approved ?? state.candidate)!.signedUrl!}
+                    src={displayedImage.signedUrl}
                     alt=""
                     style={{ width: "100%", borderRadius: 12, border: "1px solid var(--color-border)" }}
                   />
