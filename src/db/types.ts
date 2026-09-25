@@ -97,7 +97,9 @@ export type ToonBubbleTailDirection =
 
 /** STEP 7 — 말풍선 렌더링 스타일. 데이터(style 문자열)와 렌더링 방식을 분리해
  * 두어 새 스타일 추가 시 렌더러만 확장하면 되게 한다. */
-export type ToonBubbleStyle = "round" | "thought" | "emphasis";
+export type ToonBubbleStyle = "round" | "thought" | "emphasis" | "normal" | "shout" | "whisper" | "soft" | "text_only";
+export type ToonDialogueEmotion = "neutral" | "happy" | "warm" | "sad" | "panic" | "surprised" | "angry" | "tired" | "determined";
+export type ToonNarrationPreset = "dark" | "light" | "cream" | "soft";
 
 /** 0~1 normalized 좌표. 해상도/디바이스가 달라져도 동일 상대 위치를 유지한다. */
 export interface ToonBubble {
@@ -116,6 +118,9 @@ export interface ToonBubble {
    * Editor에서 명시적으로 켠 경우에만 true로 저장된다.
    */
   tail_enabled?: boolean;
+  /** Optional marker for geometry introduced by deterministic Smart Layout. */
+  smart_layout_version?: 1;
+  opacity?: number;
 }
 
 export interface ToonDialogueItem {
@@ -125,6 +130,7 @@ export interface ToonDialogueItem {
   bubble_type: ToonBubbleType;
   /** null이면 아직 사용자가 말풍선을 배치하지 않은 상태(자동 배치 전). */
   bubble: ToonBubble | null;
+  emotion?: ToonDialogueEmotion;
 }
 
 /** STEP 7 — 내레이션 박스는 대사 말풍선과 별개 도형(상단/하단 모서리 둥근 사각형)이라
@@ -135,6 +141,8 @@ export interface ToonNarrationBubble {
   width: number;
   height: number;
   font_size?: number;
+  preset?: ToonNarrationPreset;
+  opacity?: number;
 }
 
 /** 019 마이그레이션 — 표지/본문 컷 구분. */

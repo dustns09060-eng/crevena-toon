@@ -25,7 +25,9 @@ export const ToonBubbleTailDirectionSchema = z.enum([
 export const ToonBubbleTypeSchema = z.enum(["speech", "thought", "narration", "shout"]);
 
 /** STEP 7 — 말풍선 렌더링 스타일(데이터). 렌더러는 이 값을 보고 모양만 바꾼다. */
-export const ToonBubbleStyleSchema = z.enum(["round", "thought", "emphasis"]);
+export const ToonBubbleStyleSchema = z.enum(["round", "thought", "emphasis", "normal", "shout", "whisper", "soft", "text_only"]);
+export const ToonDialogueEmotionSchema = z.enum(["neutral", "happy", "warm", "sad", "panic", "surprised", "angry", "tired", "determined"]);
+export const ToonNarrationPresetSchema = z.enum(["dark", "light", "cream", "soft"]);
 
 export const ToonBubbleSchema = z
   .object({
@@ -37,6 +39,8 @@ export const ToonBubbleSchema = z
     font_size: z.number().min(8).max(96).optional(),
     style: ToonBubbleStyleSchema.optional(),
     tail_enabled: z.boolean().optional(),
+    smart_layout_version: z.literal(1).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   })
   .refine((b) => b.x + b.width <= 1, {
     message: "x + width는 1을 초과할 수 없습니다 (말풍선이 이미지 오른쪽 밖으로 나감)",
@@ -55,6 +59,8 @@ export const ToonNarrationBubbleSchema = z
     width: z.number().gt(0).max(1),
     height: z.number().gt(0).max(1),
     font_size: z.number().min(8).max(96).optional(),
+    preset: ToonNarrationPresetSchema.optional(),
+    opacity: z.number().min(0).max(1).optional(),
   })
   .refine((b) => b.x + b.width <= 1, {
     message: "x + width는 1을 초과할 수 없습니다",
@@ -107,6 +113,7 @@ export const ToonDialogueItemSchema = z.object({
   text: z.string().min(1),
   bubble_type: ToonBubbleTypeSchema,
   bubble: ToonBubbleSchema.nullable(),
+  emotion: ToonDialogueEmotionSchema.optional(),
 });
 
 export const ToonDialogueSchema = z.array(ToonDialogueItemSchema);
