@@ -14,6 +14,21 @@ const doc = (overrides: Record<string, unknown> = {}) => JSON.stringify({
 });
 
 describe("external dialogue JSON", () => {
+  test("optional emotions, explicit styles and styled narration retain legacy input compatibility", () => {
+    const styled = parseDialogueImport(doc({ panels: [{ panel_number: 1, dialogue: [
+      { speaker: "엄마", text: "무서워!", emotion: "panic" },
+      { speaker: "엄마", text: "조용히", bubble_style: "whisper", emotion: "warm" },
+      { speaker: "엄마", text: "명시 우선", bubble_style: "round", emotion: "panic" },
+    ], narration: { text: "따뜻한 하루", style: "soft" } }] }), 11);
+    expect(styled.ok).toBe(true);
+    if (!styled.ok) return;
+    const values = buildImportUpdates(styled.value, panels, [character])[1].values as { dialogue: Array<{ bubble: { style: string }; emotion?: string }>; narration: string; narration_bubble: { preset: string } };
+    expect(values.dialogue.map((d) => d.bubble.style)).toEqual(["shout", "whisper", "round"]);
+    expect(values.dialogue[0].emotion).toBe("panic");
+    expect(values.narration).toBe("따뜻한 하루");
+    expect(values.narration_bubble.preset).toBe("soft");
+    expect(parseDialogueImport(doc({ panels: [{ panel_number: 1, dialogue: [{ speaker: "엄마", text: "안녕", emotion: "unknown" }], narration: null }] }), 11).ok).toBe(false);
+  });
   test("file import reads the same JSON as pasted text, rejecting bad extensions and sizes", async () => {
     const input = { name: "episode.json", size: 200, text: async () => doc() };
     expect(parseDialogueImport(await readDialogueImportFile(input), 11)).toEqual(parseDialogueImport(doc(), 11));
