@@ -81,7 +81,7 @@ export default function DialogueImportPanel({ projectId, onComplete, disabled }:
             const existing = inspection.conflicts.find((c) => c.panelNumber === p.panel_number);
             return <div className="card" key={p.panel_number}><strong>Panel {p.panel_number} · 대사 {p.dialogue.length}개</strong>
               {p.dialogue.map((d, i) => <p key={i}>{d.speaker}: “{d.text}”</p>)}
-              <p>Narration: {p.narration || "(없음)"}</p>
+              <p>Narration: {typeof p.narration === "object" && p.narration !== null ? p.narration.text : p.narration || "(없음)"}</p>
               {existing?.dialogue && <p>기존 대사 있음 → 가져오기 시 교체됨</p>}
               {existing?.narration && <p>기존 내레이션 있음 → 가져오기 시 교체됨</p>}
             </div>;

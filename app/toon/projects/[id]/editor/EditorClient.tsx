@@ -27,9 +27,11 @@ import {
 } from "../../../../../lib/editor/renderPanel";
 import { scaleFontSizeToForeground } from "../../../../../lib/editor/containFit";
 import { renderPanelsInOrder } from "../../../../../lib/editor/batchRender";
+import { smartLayoutAll, type SmartResult } from "../../../../../lib/editor/smartLayout";
+import { applySmartLayoutAction } from "../../../../../lib/projects/smartLayout";
 import { getFinalImageDimensions } from "../../../../../src/providers/finalImageConfig";
 import type { ProjectCharacterContext } from "../../../../../lib/projects/service";
-import type { ToonBubbleStyle, ToonBubbleTailDirection } from "../../../../../src/db/types";
+import type { ToonBubbleStyle, ToonBubbleTailDirection, ToonNarrationPreset } from "../../../../../src/db/types";
 
 type Selection = { kind: "dialogue"; id: string } | { kind: "narration" } | { kind: "cover" } | null;
 
@@ -43,6 +45,11 @@ const BUBBLE_STYLE_LABELS: Record<ToonBubbleStyle, string> = {
   round: "일반 말풍선",
   thought: "생각 말풍선",
   emphasis: "강조 말풍선",
+  normal: "일반",
+  shout: "외침",
+  whisper: "속삭임",
+  soft: "감성",
+  text_only: "글자만",
 };
 
 const TAIL_DIRECTION_LABELS: Record<Exclude<ToonBubbleTailDirection, "none">, string> = {
@@ -82,6 +89,9 @@ export default function EditorClient({
   const [message, setMessage] = useState<string | null>(null);
   const [finalPreviewUrl, setFinalPreviewUrl] = useState<string | null>(null);
   const [foregroundRect, setForegroundRect] = useState<RenderedForeground | null>(null);
+  const [smartPreview, setSmartPreview] = useState<{ results: SmartResult[]; overwrite: boolean; targetId: string | null } | null>(null);
+  const [smartOverwrite, setSmartOverwrite] = useState(false);
+  const [smartSaving, setSmartSaving] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -94,10 +104,11 @@ export default function EditorClient({
     startY: number;
   } | null>(null);
 
-  const panel = panels[currentIndex];
+  const panel = smartPreview?.results[currentIndex]?.status === "PASS" ? { ...panels[currentIndex], ...smartPreview.results[currentIndex].panel } : panels[currentIndex];
   const dims = useMemo(() => getFinalImageDimensions(), []);
 
   function updatePanel(panelId: string, updater: (p: EditorPanelData) => EditorPanelData) {
+    setSmartPreview(null);
     setPanels((prev) => prev.map((p) => (p.id === panelId ? updater(p) : p)));
     setDirty((prev) => ({ ...prev, [panelId]: true }));
     setBatchCompleted((prev) => { const next = new Set(prev); next.delete(panelId); return next; });
@@ -167,6 +178,31 @@ export default function EditorClient({
     setCurrentIndex(index);
   }
 
+  function previewSmart(single: boolean, overwrite = smartOverwrite, targetId = single ? panels[currentIndex].id : null) {
+    if (Object.values(dirty).some(Boolean)) { setMessage("자동 배치 전에 편집 중인 내용을 저장해주세요."); return; }
+    const results = smartLayoutAll(panels.map((p) => p.hasStoredLayout ? p : { ...p, dialogue: p.dialogue.map((d) => ({ ...d, bubble: null })) }), overwrite)
+      .map((r, i) => targetId && panels[i].id !== targetId ? { status: "SKIPPED_MANUAL" as const, panel: panels[i], reason: "이번 적용 대상 아님" } : r);
+    setSmartPreview({ results, overwrite, targetId });
+    setMessage(null);
+  }
+
+  async function applySmart() {
+    if (!smartPreview || smartSaving) return;
+    const targets = panels.filter((p) => !smartPreview.targetId || p.id === smartPreview.targetId).map((p) => ({ id: p.id, updatedAt: p.updatedAt }));
+    setSmartSaving(true);
+    try {
+      const result = await applySmartLayoutAction(projectId, targets, smartPreview.overwrite);
+      if (!result.ok) { setMessage(result.message); setSmartPreview(null); return; }
+      const fresh = await getPanelEditorData(projectId);
+      if (!fresh.ok) { setMessage("적용은 완료되었으나 새로고침하지 못했습니다. 페이지를 다시 열어주세요."); setSmartPreview(null); return; }
+      setPanels(fresh.panels);
+      setBatchCompleted((previous) => { const next = new Set(previous); for (const target of targets) next.delete(target.id); return next; });
+      setSmartPreview(null);
+      setMessage(result.message);
+    } catch { setSmartPreview(null); setMessage("저장 결과를 확인하지 못했습니다. 페이지를 다시 열어 확인해주세요."); }
+    finally { setSmartSaving(false); }
+  }
+
   function handleTextChange(itemId: string, text: string) {
     updatePanel(panel.id, (p) => ({
       ...p,
@@ -207,6 +243,10 @@ export default function EditorClient({
         d.id === itemId && d.bubble ? { ...d, bubble: { ...d.bubble, font_size: fontSize } } : d
       ),
     }));
+  }
+
+  function handleBubbleOpacityChange(itemId: string, opacity: number) {
+    updatePanel(panel.id, (p) => ({ ...p, dialogue: p.dialogue.map((d) => d.id === itemId && d.bubble ? { ...d, bubble: { ...d.bubble, opacity } } : d) }));
   }
 
   function handleSizeChange(itemId: string, field: "width" | "height", value: number) {
@@ -299,6 +339,14 @@ export default function EditorClient({
     );
   }
 
+  function handleNarrationPresetChange(preset: ToonNarrationPreset) {
+    updatePanel(panel.id, (p) => p.narrationBubble ? { ...p, narrationBubble: { ...p.narrationBubble, preset } } : p);
+  }
+
+  function handleNarrationOpacityChange(opacity: number) {
+    updatePanel(panel.id, (p) => p.narrationBubble ? { ...p, narrationBubble: { ...p.narrationBubble, opacity } } : p);
+  }
+
   function handleResetLayout() {
     updatePanel(panel.id, (p) => ({
       ...p,
@@ -337,7 +385,7 @@ export default function EditorClient({
   // 기준 비율로 변환하므로 캔버스 내부 해상도와 무관하게 동작하고,
   // 매 이동마다 clampBubbleRect로 경계를 강제한다.
   function handlePointerDown(e: React.PointerEvent, target: Selection) {
-    if (!target) return;
+    if (!target || smartPreview) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     setSelection(target);
@@ -408,6 +456,8 @@ export default function EditorClient({
           ? await saveCoverLayoutAction(panel.id, panel.coverTitle, panel.coverSubtitle, panel.coverTitleBubble)
           : await saveBubbleLayoutAction(panel.id, panel.dialogue, panel.narration, panel.narrationBubble);
       if (result.ok) {
+        const fresh = await getPanelEditorData(projectId);
+        if (fresh.ok) setPanels(fresh.panels);
         setDirty((prev) => ({ ...prev, [panel.id]: false }));
         setMessage("저장되었습니다.");
       } else {
@@ -478,10 +528,29 @@ export default function EditorClient({
 
   return (
     <div>
-      {externalProject && <DialogueImportPanel projectId={projectId} disabled={saving || rendering || batchRendering || Object.values(dirty).some(Boolean)} onComplete={async (numbers, resultMessage) => {
+      <section className="card" style={{ marginBottom: 14, minWidth: 0 }}>
+        <div className="form-actions" style={{ flexWrap: "wrap" }}>
+          <button type="button" className="btn btn-primary" onClick={() => previewSmart(false)} disabled={smartSaving || saving || batchRendering}>전체 자동 배치</button>
+          <button type="button" className="btn" onClick={() => previewSmart(true)} disabled={smartSaving || saving || batchRendering}>이 컷 자동 배치</button>
+        </div>
+        <p className="hint">그림 속 얼굴이나 소품은 분석하지 않습니다. 미리보기에서 각 컷을 확인한 뒤 적용하세요.</p>
+        {smartPreview && <div aria-label="자동 배치 미리보기" style={{ overflowWrap: "anywhere" }}>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><input type="checkbox" checked={smartPreview.overwrite} onChange={(e) => { setSmartOverwrite(e.target.checked); previewSmart(Boolean(smartPreview.targetId), e.target.checked, smartPreview.targetId); }} /> 기존 배치도 다시 자동 배치</label>
+          <p className="hint">기존 배치는 기본적으로 건너뜁니다. 컷 이름을 눌러 이미지 위 배치를 확인하세요.</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{smartPreview.results.map((result, index) => <button type="button" className="btn" key={panels[index].id} onClick={() => goToPanel(index)}>
+            {panels[index].panelType === "cover" ? "Cover" : `Panel ${panels[index].panelNumber - (panels[0].panelType === "cover" ? 1 : 0)}`} — {result.status}{result.reason ? ` (${result.reason})` : ""}
+          </button>)}</div>
+          <div className="form-actions" style={{ marginTop: 12, flexWrap: "wrap" }}>
+            <button type="button" className="btn" onClick={() => setSmartPreview(null)} disabled={smartSaving}>취소</button>
+            <button type="button" className="btn btn-primary" onClick={() => void applySmart()} disabled={smartSaving || !smartPreview.results.some((r) => r.status === "PASS") || smartPreview.results.some((r) => r.status === "REVIEW_REQUIRED")}>{smartSaving ? "적용 중..." : "전체 적용"}</button>
+          </div>
+        </div>}
+      </section>
+      {externalProject && <DialogueImportPanel projectId={projectId} disabled={Boolean(smartPreview) || saving || rendering || batchRendering || Object.values(dirty).some(Boolean)} onComplete={async (numbers, resultMessage) => {
         const fresh = await getPanelEditorData(projectId);
         if (!fresh.ok) { setMessage("가져오기는 저장되었으나 편집기 새로고침에 실패했습니다. 페이지를 다시 열어주세요."); return; }
         setPanels(fresh.panels);
+        setSmartPreview(null);
         setDirty({});
         setBatchCompleted((previous) => {
           const next = new Set(previous);
@@ -597,6 +666,7 @@ export default function EditorClient({
         })()}
       </div>
 
+      <fieldset disabled={Boolean(smartPreview)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-actions" style={{ marginTop: 12 }}>
         <button type="button" className="btn" onClick={() => goToPanel(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
           이전 컷
@@ -720,6 +790,9 @@ export default function EditorClient({
           </div>
           {item.bubble && (
             <>
+              <div className="field"><label>말풍선 배경 투명도 ({Math.round((item.bubble.opacity ?? 1) * 100)}%)</label>
+                <input type="range" min={0} max={100} value={Math.round((item.bubble.opacity ?? 1) * 100)} onChange={(e) => handleBubbleOpacityChange(item.id, Number(e.target.value) / 100)} />
+              </div>
               <div className="field">
                 <label>글자 크기 ({item.bubble.font_size ?? 28}px)</label>
                 <input
@@ -801,6 +874,10 @@ export default function EditorClient({
         </div>
         {panel.narrationBubble && (
           <>
+            <div className="field"><label>내레이션 배경</label><select className="input" value={panel.narrationBubble.preset ?? "dark"} onChange={(e) => handleNarrationPresetChange(e.target.value as ToonNarrationPreset)}>
+              <option value="dark">어둡게</option><option value="light">밝게</option><option value="cream">크림</option><option value="soft">부드럽게</option>
+            </select></div>
+            <div className="field"><label>배경 투명도 ({Math.round((panel.narrationBubble.opacity ?? 0.72) * 100)}%)</label><input type="range" min={0} max={100} value={Math.round((panel.narrationBubble.opacity ?? 0.72) * 100)} onChange={(e) => handleNarrationOpacityChange(Number(e.target.value) / 100)} /></div>
             <div className="field">
               <label>글자 크기 ({panel.narrationBubble.font_size ?? 24}px)</label>
               <input
@@ -820,6 +897,10 @@ export default function EditorClient({
                 value={Math.round(panel.narrationBubble.width * 100)}
                 onChange={(e) => handleNarrationSizeChange("width", Number(e.target.value) / 100)}
               />
+            </div>
+            <div className="field">
+              <label>높이 ({Math.round(panel.narrationBubble.height * 100)}%)</label>
+              <input type="range" min={5} max={60} value={Math.round(panel.narrationBubble.height * 100)} onChange={(e) => handleNarrationSizeChange("height", Number(e.target.value) / 100)} />
             </div>
           </>
         )}
@@ -855,6 +936,7 @@ export default function EditorClient({
           <img src={finalPreviewUrl} alt="최종 이미지" style={{ width: "100%", borderRadius: 12 }} />
         </div>
       )}
+      </fieldset>
     </div>
   );
 }
