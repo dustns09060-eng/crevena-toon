@@ -136,6 +136,7 @@ function drawBubbleTail(
   ]);
 
   ctx.save();
+  ctx.globalAlpha = bubble.opacity ?? 1;
   ctx.fillStyle = "#ffffff";
   ctx.beginPath();
   ctx.moveTo(clamped[0][0], clamped[0][1]);
@@ -145,7 +146,7 @@ function drawBubbleTail(
   ctx.fill();
   // 말풍선 몸통과 자연스럽게 이어지도록, 베이스(bubble 테두리에 닿는) 변은
   // 제외하고 바깥쪽 두 변만 테두리와 같은 스타일로 다시 긋는다.
-  ctx.lineWidth = (bubble.style ?? "round") === "emphasis" ? 4 : 2;
+  ctx.lineWidth = ["emphasis", "shout"].includes(bubble.style ?? "round") ? 4 : 2;
   ctx.strokeStyle = "#111111";
   ctx.beginPath();
   ctx.moveTo(clamped[0][0], clamped[0][1]);
@@ -174,18 +175,27 @@ function drawBubble(
   drawBubbleTail(ctx, px, item, canvasWidth, canvasHeight);
 
   ctx.save();
-  ctx.fillStyle = "#ffffff";
-  ctx.lineWidth = style === "emphasis" ? 4 : 2;
-  ctx.strokeStyle = "#111111";
-  ctx.setLineDash(style === "thought" ? [6, 6] : []);
-
-  roundRectPath(ctx, px.x, px.y, px.width, px.height, Math.min(px.width, px.height) * 0.25);
-  ctx.fill();
-  ctx.stroke();
+  if (style !== "text_only") {
+    ctx.globalAlpha = bubble.opacity ?? 1;
+    ctx.fillStyle = style === "soft" ? "#fff6ee" : "#ffffff";
+    ctx.lineWidth = ["emphasis", "shout"].includes(style) ? 4 : style === "whisper" ? 1.5 : 2;
+    ctx.strokeStyle = style === "soft" ? "#b99689" : style === "whisper" ? "#686868" : "#111111";
+    ctx.setLineDash(style === "thought" || style === "whisper" ? [6, 6] : []);
+    roundRectPath(ctx, px.x, px.y, px.width, px.height, style === "shout" ? 8 : Math.min(px.width, px.height) * 0.25);
+    ctx.fill();
+    ctx.stroke();
+    if (style === "thought" && bubble.smart_layout_version === 1) {
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(Math.min(canvasWidth - 9, px.x + px.width * 0.18), Math.min(canvasHeight - 9, px.y + px.height + 9), 5, 0, 2 * Math.PI);
+      ctx.fill(); ctx.stroke();
+    }
+  }
   ctx.restore();
 
   ctx.save();
   ctx.fillStyle = "#111111";
+  if (style === "text_only") { ctx.shadowColor = "#ffffff"; ctx.shadowBlur = 9; }
   drawWrappedText(ctx, item.text, px, fontSizePx);
   ctx.restore();
 }
@@ -195,13 +205,16 @@ function drawNarration(ctx: CanvasRenderingContext2D, text: string, bubble: Toon
   const fontSizePx = scaleFontSizeToForeground(bubble.font_size ?? 24, foreground.drawWidth);
 
   ctx.save();
-  ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
+  const preset = bubble.preset ?? "dark";
+  const palette = { dark: { bg: "0, 0, 0", fg: "#ffffff", border: "#ffffff" }, light: { bg: "255, 255, 255", fg: "#1a1a1a", border: "#777777" }, cream: { bg: "255, 243, 220", fg: "#2d2821", border: "#bba999" }, soft: { bg: "234, 224, 227", fg: "#302832", border: "#b6a6ad" } }[preset];
+  ctx.fillStyle = `rgba(${palette.bg}, ${bubble.opacity ?? 0.72})`;
   roundRectPath(ctx, px.x, px.y, px.width, px.height, 10);
   ctx.fill();
+  if (bubble.preset) { ctx.strokeStyle = palette.border; ctx.lineWidth = 2; ctx.stroke(); }
   ctx.restore();
 
   ctx.save();
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = palette.fg;
   drawWrappedText(ctx, text, px, fontSizePx, 0.06);
   ctx.restore();
 }

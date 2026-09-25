@@ -185,7 +185,7 @@ export function computeAutoFitBubbleSize(input: AutoFitBubbleSizeInput): AutoFit
  */
 export function shouldRenderBubbleTail(bubble: Pick<ToonBubble, "style" | "tail_enabled" | "tail_direction">): boolean {
   const style = bubble.style ?? "round";
-  return style === "round" && bubble.tail_enabled === true && bubble.tail_direction !== "none";
+  return ["round", "normal", "soft", "shout"].includes(style) && bubble.tail_enabled === true && bubble.tail_direction !== "none";
 }
 
 export interface PixelRect {
