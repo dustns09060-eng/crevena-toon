@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { EditorPanelData } from "../../../../../lib/projects/editor";
-import { saveBubbleLayoutAction, saveCoverLayoutAction, saveFinalRenderAction } from "../../../../../lib/projects/editor";
+import { getPanelEditorData, saveBubbleLayoutAction, saveCoverLayoutAction, saveFinalRenderAction } from "../../../../../lib/projects/editor";
+import DialogueImportPanel from "./DialogueImportPanel";
 import {
   AUTO_FIT_MAX_HEIGHT,
   AUTO_FIT_MAX_WIDTH,
@@ -58,11 +59,13 @@ export default function EditorClient({
   initialPanels,
   characters,
   initialPanelIndex = 0,
+  externalProject = false,
 }: {
   projectId: string;
   initialPanels: EditorPanelData[];
   characters: ProjectCharacterContext[];
   initialPanelIndex?: number;
+  externalProject?: boolean;
 }) {
   const [panels, setPanels] = useState<EditorPanelData[]>(initialPanels);
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
@@ -475,6 +478,19 @@ export default function EditorClient({
 
   return (
     <div>
+      {externalProject && <DialogueImportPanel projectId={projectId} disabled={saving || rendering || batchRendering || Object.values(dirty).some(Boolean)} onComplete={async (numbers, resultMessage) => {
+        const fresh = await getPanelEditorData(projectId);
+        if (!fresh.ok) { setMessage("가져오기는 저장되었으나 편집기 새로고침에 실패했습니다. 페이지를 다시 열어주세요."); return; }
+        setPanels(fresh.panels);
+        setDirty({});
+        setBatchCompleted((previous) => {
+          const next = new Set(previous);
+          for (const updated of fresh.panels) if (numbers.includes(updated.panelNumber)) next.delete(updated.id);
+          return next;
+        });
+        setMessage(resultMessage);
+      }} />}
+      {externalProject && Object.values(dirty).some(Boolean) && <p className="hint">일괄 가져오기 전에 현재 컷의 변경사항을 저장해주세요.</p>}
       <div className="tabbar" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
         {panels.map((p, i) => (
           <button
