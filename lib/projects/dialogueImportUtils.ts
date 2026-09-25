@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getDefaultBubbleForIndex, getDefaultCoverTitleBubble, getDefaultNarrationBubble } from "../editor/bubbleLayout";
 import { validateCoverTitleBubble, validateDialogueCharacterIds, validateNarrationBubble, validateToonDialogue } from "../../src/db/validation";
 import type { ToonDialogueItem, ToonPanel } from "../../src/db/types";
+import { ToonBubbleStyleSchema, ToonDialogueEmotionSchema, ToonNarrationPresetSchema } from "../../src/db/validation";
 
 export const MAX_DIALOGUE_IMPORT_BYTES = 1024 * 1024;
 
@@ -20,8 +21,8 @@ const schema = z.object({
   cover: z.object({ title: z.string().max(2000), subtitle: z.string().max(2000) }).strict(),
   panels: z.array(z.object({
     panel_number: z.number().int(),
-    dialogue: z.array(z.object({ speaker: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(5000) }).strict()).max(30),
-    narration: z.string().max(10000).nullable(),
+    dialogue: z.array(z.object({ speaker: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(5000), emotion: ToonDialogueEmotionSchema.optional(), bubble_style: ToonBubbleStyleSchema.optional() }).strict()).max(30),
+    narration: z.union([z.string().max(10000), z.null(), z.object({ text: z.string().max(10000), style: ToonNarrationPresetSchema.optional() }).strict()]),
   }).strict()).min(1).max(19),
 }).strict();
 
@@ -76,10 +77,11 @@ export function buildImportUpdates(doc: DialogueImportDocument, panels: ToonPane
       const panel = panels.find((p) => p.panel_number === incoming.panel_number + 1)!;
       const dialogue: ToonDialogueItem[] = incoming.dialogue.map((d, i) => ({
         id: makeId(), character_id: characters.find((c) => c.display_name === d.speaker)!.id,
-        text: d.text, bubble_type: "speech", bubble: getDefaultBubbleForIndex(i),
+        text: d.text, bubble_type: "speech", bubble: { ...getDefaultBubbleForIndex(i), style: d.bubble_style ?? (d.emotion === "panic" || d.emotion === "surprised" ? "shout" : d.emotion === "warm" ? "soft" : "round") },
+        ...(d.emotion ? { emotion: d.emotion } : {}),
       }));
-      const narration = incoming.narration?.trim() || null;
-      const narration_bubble = narration ? (panel.narration_bubble ?? getDefaultNarrationBubble()) : null;
+      const narration = (typeof incoming.narration === "object" && incoming.narration !== null ? incoming.narration.text : incoming.narration)?.trim() || null;
+      const narration_bubble = narration ? { ...(panel.narration_bubble ?? getDefaultNarrationBubble()), ...(typeof incoming.narration === "object" && incoming.narration !== null && incoming.narration.style ? { preset: incoming.narration.style } : {}) } : null;
       if (!validateToonDialogue(dialogue).valid || !validateDialogueCharacterIds(dialogue, characters.map((c) => c.id)).valid
         || !validateNarrationBubble(narration_bubble).valid) throw Error("대사 또는 내레이션 배치가 올바르지 않습니다.");
       return { panel, values: { dialogue, narration, narration_bubble } };

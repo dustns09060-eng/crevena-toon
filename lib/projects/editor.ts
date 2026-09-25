@@ -45,6 +45,8 @@ export interface EditorPanelData {
   panelType: ToonPanelType;
   rawImageSignedUrl: string | null;
   hasFinalImage: boolean;
+  hasStoredLayout: boolean;
+  updatedAt: string;
   dialogue: ToonDialogueItem[];
   narration: string | null;
   narrationBubble: ToonNarrationBubble | null;
@@ -104,6 +106,8 @@ export async function getPanelEditorData(projectId: string): Promise<EditorProje
       panelType: panel.panel_type,
       rawImageSignedUrl: signedUrl,
       hasFinalImage: Boolean(panel.image_url),
+      hasStoredLayout: panel.panel_type === "cover" ? Boolean(panel.cover_title_bubble) : panel.dialogue.some((item) => Boolean(item.bubble)) || Boolean(panel.narration_bubble),
+      updatedAt: panel.updated_at,
       dialogue,
       narration: panel.narration,
       narrationBubble,
