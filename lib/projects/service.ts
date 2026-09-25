@@ -95,12 +95,12 @@ export type DeleteProjectResult = { deleted: true } | { deleted: false; reason: 
 const PANELS_BUCKET = "toon-panels";
 
 /**
- * STEP 8 §16 — 프로젝트에는 raw/final 이미지가 Storage에 쌓여 있을 수
+ * STEP 8 §16 — 프로젝트에는 raw/final/external 이미지가 Storage에 쌓여 있을 수
  * 있다. toon_projects 삭제는 FK CASCADE로 DB row는 정리해도 Storage
- * 객체는 절대 지우지 않으므로, 여기서 raw/final 하위의 모든 객체를
+ * 객체는 절대 지우지 않으므로, 여기서 각 경로의 모든 객체를
  * 명시적으로 나열해서 지운다. 재렌더링으로 남는 "가리키지 않는" 이전
  * final 파일까지 정리하기 위해 DB에 기록된 경로 하나만 믿지 않고,
- * 각 컷의 raw/final 폴더를 Storage list()로 직접 조회한다.
+ * 각 컷의 raw/final/external 폴더를 Storage list()로 직접 조회한다.
  *
  * Character Sheet(toon-character-sheets 버킷)는 캐릭터 자산이므로
  * 이 함수는 절대 건드리지 않는다 — 프로젝트 삭제는 toon_characters에도
@@ -115,7 +115,7 @@ export async function cleanupProjectStorage(
   const allPaths: string[] = [];
 
   for (const panelNumber of panelNumbers) {
-    for (const sub of ["raw", "final"] as const) {
+    for (const sub of ["raw", "final", "external"] as const) {
       const prefix = `${userId}/${projectId}/${sub}/${panelNumber}`;
       const { data: files, error } = await supabase.storage.from(PANELS_BUCKET).list(prefix);
       if (error) throw error;
