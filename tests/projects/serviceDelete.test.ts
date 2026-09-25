@@ -86,13 +86,14 @@ describe("deleteProject", () => {
     expect((supabase as unknown as { _calls: Record<string, unknown[]> })._calls["storage.toon-panels.remove"]).toBeUndefined();
   });
 
-  test("raw/final 폴더의 모든 파일을 나열해서 지운 뒤 프로젝트 행을 삭제한다", async () => {
+  test("raw/final/external 폴더의 모든 파일을 나열해서 지운 뒤 프로젝트 행을 삭제한다", async () => {
     const supabase = createSupabaseMock({
       project: OWNED_PROJECT,
       panels: [PANEL],
       storageFiles: {
         "user-a/proj-1/raw/1": [{ name: "gen-1.png" }],
         "user-a/proj-1/final/1": [{ name: "render-1.png" }, { name: "render-2.png" }],
+        "user-a/proj-1/external/1": [{ name: "uploaded.png" }],
       },
     });
     const { deleteProject } = await import("../../lib/projects/service");
@@ -107,6 +108,7 @@ describe("deleteProject", () => {
         "user-a/proj-1/raw/1/gen-1.png",
         "user-a/proj-1/final/1/render-1.png",
         "user-a/proj-1/final/1/render-2.png",
+        "user-a/proj-1/external/1/uploaded.png",
       ].sort()
     );
     expect(calls["toon_projects.delete"]).toHaveLength(1);
