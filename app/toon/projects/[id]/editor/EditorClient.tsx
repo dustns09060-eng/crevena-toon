@@ -29,7 +29,7 @@ import { scaleFontSizeToForeground } from "../../../../../lib/editor/containFit"
 import { renderPanelsInOrder } from "../../../../../lib/editor/batchRender";
 import { smartLayoutAll, type SmartResult } from "../../../../../lib/editor/smartLayout";
 import { applySmartLayoutAction } from "../../../../../lib/projects/smartLayout";
-import { applySmartV2Action, prepareSmartV2PreviewAction, visualCacheSummaryAction, type PreviewEntry } from "../../../../../lib/projects/smartLayoutV2";
+import { applySmartV2Action, prepareSmartV2PreviewAction, reanalyzeVisualAction, visualCacheSummaryAction, type PreviewEntry } from "../../../../../lib/projects/smartLayoutV2";
 import { canAutomaticallyArrange, panelLayoutSource } from "../../../../../lib/editor/layoutProvenance";
 import { getFinalImageDimensions } from "../../../../../src/providers/finalImageConfig";
 import type { ProjectCharacterContext } from "../../../../../lib/projects/service";
@@ -111,7 +111,7 @@ export default function EditorClient({
   } | null>(null);
 
   const v2Current = v2Preview?.entries[currentIndex]?.result;
-  const panel = v2Current?.status === "PASS" ? { ...panels[currentIndex], ...v2Current.panel }
+  const panel = v2Current && (v2Current.status === "PASS" || v2Current.status === "PASS_WITH_WARNING") ? { ...panels[currentIndex], ...v2Current.panel }
     : smartPreview?.results[currentIndex]?.status === "PASS" ? { ...panels[currentIndex], ...smartPreview.results[currentIndex].panel } : panels[currentIndex];
   const dims = useMemo(() => getFinalImageDimensions(), []);
 
@@ -228,7 +228,7 @@ export default function EditorClient({
     if (!v2Preview || smartSaving) return;
     setSmartSaving(true);
     try {
-      const targets = v2Preview.entries.filter((entry) => entry.result.status === "PASS").map((entry) => entry.target);
+      const targets = v2Preview.entries.filter((entry) => entry.result.status === "PASS" || entry.result.status === "PASS_WITH_WARNING").map((entry) => entry.target);
       const result = await applySmartV2Action(projectId, targets, v2Preview.overwrite);
       if (!result.ok) { setMessage(result.message); return; }
       const fresh = await getPanelEditorData(projectId);
@@ -236,6 +236,19 @@ export default function EditorClient({
       setPanels(fresh.panels); setV2Preview(null); setMessage(result.message);
       setBatchCompleted((previous) => { const next = new Set(previous); targets.forEach((target) => next.delete(target.id)); return next; });
     } finally { setSmartSaving(false); }
+  }
+
+  async function reanalyzeCurrent() {
+    const current = v2Preview?.entries.find((entry) => entry.target.id === panels[currentIndex].id);
+    if (!current?.summary || !window.confirm("이 컷의 기존 분석 cache만 새로 분석합니다. Vision API를 1회 호출하며 503일 때만 최대 3회 시도합니다. 계속할까요?")) return;
+    setV2Progress("선택한 이미지 재분석 중");
+    const refreshed = await reanalyzeVisualAction(projectId, current.target.id, current.target.imageRowId, true);
+    if (refreshed.ok && refreshed.entries) {
+      setV2Preview({ entries: refreshed.entries, overwrite: true, targetId: current.target.id });
+      setCacheSummary({ cached: 0, needed: 1 });
+      setMessage(null);
+    } else setMessage(refreshed.message ?? "재분석을 완료하지 못했습니다.");
+    setV2Progress("미리보기 준비 완료");
   }
 
   async function applySmart() {
@@ -593,14 +606,24 @@ export default function EditorClient({
           <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><input type="checkbox" checked={v2Preview.overwrite} onChange={(e) => { setV2Overwrite(e.target.checked); void previewV2(v2Preview.targetId, e.target.checked); }} /> 수동 배치도 다시 자동 배치</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{v2Preview.entries.map((entry, index) => <button type="button" className="btn" key={entry.target.id} onClick={() => goToPanel(index)} style={{ maxWidth: "100%", whiteSpace: "normal", textAlign: "left" }}>
             {panels[index].panelType === "cover" ? "Cover" : `Panel ${panels[index].panelNumber - (panels[0].panelType === "cover" ? 1 : 0)}`} — {entry.result.status}<br />
-            분석: {entry.analysis} · 배치: {entry.result.source} → {entry.result.status === "PASS" ? "SMART_V2" : "유지"}
+            분석: {entry.analysis} · 배치: {entry.result.source} → {entry.result.status === "PASS" || entry.result.status === "PASS_WITH_WARNING" ? "SMART_V2" : "유지"}
             {entry.failureCode && <><br />분석 실패 · {entry.failureCode === "PROVIDER_503" || entry.failureCode === "PROVIDER_TIMEOUT" ? "일시적 AI 오류" : entry.failureCode === "INVALID_STRUCTURED_RESPONSE" || entry.failureCode === "VALIDATION_FAILED" ? "응답 형식 오류" : entry.failureCode === "IMAGE_DOWNLOAD_FAILED" || entry.failureCode === "IMAGE_PREPROCESS_FAILED" ? "이미지 준비 오류" : "분석 처리 오류"}</>}
             {entry.result.avoided.length > 0 && <><br />회피 영역: {entry.result.avoided.join(", ")}</>}
+            {entry.result.warnings?.length ? <><br />주의: {entry.result.warnings.join(", ")}</> : null}
             {entry.result.reason && <><br />{entry.result.reasonCode ?? entry.result.reason}</>}
           </button>)}</div>
+          {v2Preview.entries.some((entry) => entry.summary) && <details className="hint" style={{ marginTop: 8 }}>
+            <summary>분석 영역 요약 보기</summary>
+            {v2Preview.entries.filter((entry) => entry.summary).map((entry) => <p key={entry.target.id}>
+              {panels.find((p) => p.id === entry.target.id)?.panelType === "cover" ? "Cover" : `Panel ${panels.findIndex((p) => p.id === entry.target.id)}`}:
+              {Object.entries(entry.summary!.counts).filter(([, count]) => count > 0).map(([type, count]) => ` ${type} ×${count}`).join(",")};
+              중요 소품: {entry.summary!.importantObjects.join(", ") || "없음"}; 행동: {entry.summary!.actions.join(", ") || "없음"}
+            </p>)}
+          </details>}
+          {v2Preview.entries.some((entry) => entry.target.id === panel.id && entry.summary) && <button type="button" className="btn" style={{ marginTop: 8, maxWidth: "100%", whiteSpace: "normal" }} onClick={() => void reanalyzeCurrent()} disabled={smartSaving || Boolean(v2Progress && v2Progress !== "미리보기 준비 완료")}>이 컷 이미지 분석 다시 하기</button>}
           <div className="form-actions" style={{ marginTop: 12, flexWrap: "wrap" }}>
             <button type="button" className="btn" onClick={() => { setV2Preview(null); setV2Progress(null); }} disabled={smartSaving}>취소</button>
-            <button type="button" className="btn btn-primary" onClick={() => void applyV2()} disabled={smartSaving || !v2Preview.entries.some((e) => e.result.status === "PASS") || v2Preview.entries.some((e) => e.result.status === "REVIEW_REQUIRED")}>전체 적용</button>
+            <button type="button" className="btn btn-primary" onClick={() => void applyV2()} disabled={smartSaving || !v2Preview.entries.some((e) => e.result.status === "PASS" || e.result.status === "PASS_WITH_WARNING") || v2Preview.entries.some((e) => e.result.status === "REVIEW_REQUIRED")}>전체 적용</button>
           </div>
         </div>}
         {smartPreview && <div aria-label="자동 배치 미리보기" style={{ overflowWrap: "anywhere" }}>
