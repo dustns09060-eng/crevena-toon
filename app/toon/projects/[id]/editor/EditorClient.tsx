@@ -29,6 +29,8 @@ import { scaleFontSizeToForeground } from "../../../../../lib/editor/containFit"
 import { renderPanelsInOrder } from "../../../../../lib/editor/batchRender";
 import { smartLayoutAll, type SmartResult } from "../../../../../lib/editor/smartLayout";
 import { applySmartLayoutAction } from "../../../../../lib/projects/smartLayout";
+import { applySmartV2Action, prepareSmartV2PreviewAction, visualCacheSummaryAction, type PreviewEntry } from "../../../../../lib/projects/smartLayoutV2";
+import { canAutomaticallyArrange, panelLayoutSource } from "../../../../../lib/editor/layoutProvenance";
 import { getFinalImageDimensions } from "../../../../../src/providers/finalImageConfig";
 import type { ProjectCharacterContext } from "../../../../../lib/projects/service";
 import type { ToonBubbleStyle, ToonBubbleTailDirection, ToonNarrationPreset } from "../../../../../src/db/types";
@@ -92,6 +94,10 @@ export default function EditorClient({
   const [smartPreview, setSmartPreview] = useState<{ results: SmartResult[]; overwrite: boolean; targetId: string | null } | null>(null);
   const [smartOverwrite, setSmartOverwrite] = useState(false);
   const [smartSaving, setSmartSaving] = useState(false);
+  const [v2Preview, setV2Preview] = useState<{ entries: PreviewEntry[]; overwrite: boolean; targetId: string | null } | null>(null);
+  const [v2Overwrite, setV2Overwrite] = useState(false);
+  const [v2Progress, setV2Progress] = useState<string | null>(null);
+  const [cacheSummary, setCacheSummary] = useState<{ cached: number; needed: number } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -104,11 +110,14 @@ export default function EditorClient({
     startY: number;
   } | null>(null);
 
-  const panel = smartPreview?.results[currentIndex]?.status === "PASS" ? { ...panels[currentIndex], ...smartPreview.results[currentIndex].panel } : panels[currentIndex];
+  const v2Current = v2Preview?.entries[currentIndex]?.result;
+  const panel = v2Current?.status === "PASS" ? { ...panels[currentIndex], ...v2Current.panel }
+    : smartPreview?.results[currentIndex]?.status === "PASS" ? { ...panels[currentIndex], ...smartPreview.results[currentIndex].panel } : panels[currentIndex];
   const dims = useMemo(() => getFinalImageDimensions(), []);
 
   function updatePanel(panelId: string, updater: (p: EditorPanelData) => EditorPanelData) {
     setSmartPreview(null);
+    setV2Preview(null);
     setPanels((prev) => prev.map((p) => (p.id === panelId ? updater(p) : p)));
     setDirty((prev) => ({ ...prev, [panelId]: true }));
     setBatchCompleted((prev) => { const next = new Set(prev); next.delete(panelId); return next; });
@@ -180,10 +189,53 @@ export default function EditorClient({
 
   function previewSmart(single: boolean, overwrite = smartOverwrite, targetId = single ? panels[currentIndex].id : null) {
     if (Object.values(dirty).some(Boolean)) { setMessage("자동 배치 전에 편집 중인 내용을 저장해주세요."); return; }
-    const results = smartLayoutAll(panels.map((p) => p.hasStoredLayout ? p : { ...p, dialogue: p.dialogue.map((d) => ({ ...d, bubble: null })) }), overwrite)
+    const results = smartLayoutAll(panels.map((p) => ({ ...p,
+      hasStoredLayout: !canAutomaticallyArrange(panelLayoutSource(p)),
+    })), overwrite)
       .map((r, i) => targetId && panels[i].id !== targetId ? { status: "SKIPPED_MANUAL" as const, panel: panels[i], reason: "이번 적용 대상 아님" } : r);
     setSmartPreview({ results, overwrite, targetId });
+    setV2Preview(null);
     setMessage(null);
+  }
+
+  async function previewV2(targetId: string | null = null, overwrite = v2Overwrite) {
+    if (Object.values(dirty).some(Boolean)) { setMessage("자동 배치 전에 편집 중인 내용을 저장해주세요."); return; }
+    setSmartPreview(null); setV2Preview(null); setMessage(null);
+    setV2Progress("분석 준비");
+    try {
+      const summary = await visualCacheSummaryAction(projectId, overwrite, targetId);
+      setCacheSummary(summary.ok ? { cached: summary.cached ?? 0, needed: summary.needed ?? 0 } : null);
+      const entries: PreviewEntry[] = [];
+      if (targetId) {
+        const preview = await prepareSmartV2PreviewAction(projectId, overwrite, targetId);
+        if (!preview.ok || !preview.entries) throw Error(preview.message ?? "미리보기를 준비하지 못했습니다.");
+        entries.push(...preview.entries);
+      } else for (const [index, candidate] of panels.entries()) {
+        setV2Progress(`이미지 분석 및 배치 ${index + 1}/${panels.length}`);
+        const preview = await prepareSmartV2PreviewAction(projectId, overwrite, candidate.id);
+        if (!preview.ok || !preview.entries) throw Error(preview.message ?? "미리보기를 준비하지 못했습니다.");
+        const entry = preview.entries.find((value) => value.target.id === candidate.id);
+        if (!entry) throw Error("컷을 확인하지 못했습니다.");
+        entries.push(entry);
+      }
+      setV2Progress("자동 배치 계산 중");
+      setV2Preview({ entries, overwrite, targetId });
+      setV2Progress("미리보기 준비 완료");
+    } catch (error) { setV2Progress(null); setMessage(error instanceof Error ? error.message : "미리보기 준비 실패"); }
+  }
+
+  async function applyV2() {
+    if (!v2Preview || smartSaving) return;
+    setSmartSaving(true);
+    try {
+      const targets = v2Preview.entries.filter((entry) => entry.result.status === "PASS").map((entry) => entry.target);
+      const result = await applySmartV2Action(projectId, targets, v2Preview.overwrite);
+      if (!result.ok) { setMessage(result.message); return; }
+      const fresh = await getPanelEditorData(projectId);
+      if (!fresh.ok) { setMessage("적용 후 편집기 새로고침에 실패했습니다."); return; }
+      setPanels(fresh.panels); setV2Preview(null); setMessage(result.message);
+      setBatchCompleted((previous) => { const next = new Set(previous); targets.forEach((target) => next.delete(target.id)); return next; });
+    } finally { setSmartSaving(false); }
   }
 
   async function applySmart() {
@@ -530,10 +582,26 @@ export default function EditorClient({
     <div>
       <section className="card" style={{ marginBottom: 14, minWidth: 0 }}>
         <div className="form-actions" style={{ flexWrap: "wrap" }}>
-          <button type="button" className="btn btn-primary" onClick={() => previewSmart(false)} disabled={smartSaving || saving || batchRendering}>전체 자동 배치</button>
-          <button type="button" className="btn" onClick={() => previewSmart(true)} disabled={smartSaving || saving || batchRendering}>이 컷 자동 배치</button>
+          <button type="button" className="btn btn-primary" onClick={() => void previewV2()} disabled={Boolean(v2Progress && v2Progress !== "미리보기 준비 완료") || smartSaving || saving || batchRendering}>전체 자동 배치</button>
+          <button type="button" className="btn" onClick={() => void previewV2(panel.id)} disabled={Boolean(v2Progress && v2Progress !== "미리보기 준비 완료") || smartSaving || saving || batchRendering}>이 컷 자동 배치</button>
+          <button type="button" className="btn" onClick={() => previewSmart(false)} disabled={smartSaving || saving || batchRendering}>v1 자동 배치</button>
         </div>
-        <p className="hint">그림 속 얼굴이나 소품은 분석하지 않습니다. 미리보기에서 각 컷을 확인한 뒤 적용하세요.</p>
+        <p className="hint">이미지 영역을 분석하고 안전한 위치를 미리 보여줍니다. 수동·레거시 배치는 기본 보호됩니다.</p>
+        {cacheSummary && <p className="hint">분석 필요 {cacheSummary.needed}장 · 캐시 사용 {cacheSummary.cached}장</p>}
+        {v2Progress && <p role="status" className="hint">{v2Progress}</p>}
+        {v2Preview && <div aria-label="Smart Layout v2 미리보기" style={{ overflowWrap: "anywhere" }}>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><input type="checkbox" checked={v2Preview.overwrite} onChange={(e) => { setV2Overwrite(e.target.checked); void previewV2(v2Preview.targetId, e.target.checked); }} /> 수동 배치도 다시 자동 배치</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{v2Preview.entries.map((entry, index) => <button type="button" className="btn" key={entry.target.id} onClick={() => goToPanel(index)} style={{ maxWidth: "100%", whiteSpace: "normal", textAlign: "left" }}>
+            {panels[index].panelType === "cover" ? "Cover" : `Panel ${panels[index].panelNumber - (panels[0].panelType === "cover" ? 1 : 0)}`} — {entry.result.status}<br />
+            분석: {entry.analysis} · 배치: {entry.result.source} → {entry.result.status === "PASS" ? "SMART_V2" : "유지"}
+            {entry.result.avoided.length > 0 && <><br />회피 영역: {entry.result.avoided.join(", ")}</>}
+            {entry.result.reason && <><br />{entry.result.reasonCode ?? entry.result.reason}</>}
+          </button>)}</div>
+          <div className="form-actions" style={{ marginTop: 12, flexWrap: "wrap" }}>
+            <button type="button" className="btn" onClick={() => { setV2Preview(null); setV2Progress(null); }} disabled={smartSaving}>취소</button>
+            <button type="button" className="btn btn-primary" onClick={() => void applyV2()} disabled={smartSaving || !v2Preview.entries.some((e) => e.result.status === "PASS") || v2Preview.entries.some((e) => e.result.status === "REVIEW_REQUIRED")}>전체 적용</button>
+          </div>
+        </div>}
         {smartPreview && <div aria-label="자동 배치 미리보기" style={{ overflowWrap: "anywhere" }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><input type="checkbox" checked={smartPreview.overwrite} onChange={(e) => { setSmartOverwrite(e.target.checked); previewSmart(Boolean(smartPreview.targetId), e.target.checked, smartPreview.targetId); }} /> 기존 배치도 다시 자동 배치</label>
           <p className="hint">기존 배치는 기본적으로 건너뜁니다. 컷 이름을 눌러 이미지 위 배치를 확인하세요.</p>
@@ -546,7 +614,7 @@ export default function EditorClient({
           </div>
         </div>}
       </section>
-      {externalProject && <DialogueImportPanel projectId={projectId} disabled={Boolean(smartPreview) || saving || rendering || batchRendering || Object.values(dirty).some(Boolean)} onComplete={async (numbers, resultMessage) => {
+      {externalProject && <DialogueImportPanel projectId={projectId} disabled={Boolean(smartPreview || v2Preview) || saving || rendering || batchRendering || Object.values(dirty).some(Boolean)} onComplete={async (numbers, resultMessage) => {
         const fresh = await getPanelEditorData(projectId);
         if (!fresh.ok) { setMessage("가져오기는 저장되었으나 편집기 새로고침에 실패했습니다. 페이지를 다시 열어주세요."); return; }
         setPanels(fresh.panels);
@@ -666,7 +734,7 @@ export default function EditorClient({
         })()}
       </div>
 
-      <fieldset disabled={Boolean(smartPreview)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+      <fieldset disabled={Boolean(smartPreview || v2Preview)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-actions" style={{ marginTop: 12 }}>
         <button type="button" className="btn" onClick={() => goToPanel(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
           이전 컷
