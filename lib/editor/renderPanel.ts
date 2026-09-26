@@ -235,7 +235,9 @@ function drawCoverText(
 ) {
   const px = normalizedRectToCanvasPx(bubble, foreground);
   const titleFontPx = scaleFontSizeToForeground(bubble.font_size ?? 44, foreground.drawWidth);
-  const subtitleFontPx = titleFontPx * COVER_SUBTITLE_FONT_RATIO;
+  const subtitleFontPx = bubble.subtitle_font_size != null
+    ? scaleFontSizeToForeground(bubble.subtitle_font_size, foreground.drawWidth)
+    : titleFontPx * COVER_SUBTITLE_FONT_RATIO;
 
   ctx.save();
   ctx.fillStyle = "#1a1a1a";
@@ -249,9 +251,9 @@ function drawCoverText(
 
   const spacing = subtitle ? titleFontPx * 0.35 : 0;
   const subtitleLineHeight = subtitleFontPx * 1.25;
-  const subtitleLines = subtitle
-    ? wrapText((t) => ctx.measureText(t).width, subtitle, px.width * 0.92)
-    : [];
+  // Preserve the legacy measurement path; v2 measures the subtitle independently.
+  if (bubble.subtitle_font_size != null) ctx.font = `400 ${subtitleFontPx}px ${FONT_FAMILY}`;
+  const subtitleLines = subtitle ? wrapText((t) => ctx.measureText(t).width, subtitle, px.width * 0.92) : [];
   const subtitleBlockHeight = subtitleLines.length * subtitleLineHeight;
 
   const totalHeight = titleBlockHeight + spacing + subtitleBlockHeight;

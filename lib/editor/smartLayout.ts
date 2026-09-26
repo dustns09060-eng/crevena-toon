@@ -17,7 +17,7 @@ export type SmartStatus = "PASS" | "REVIEW_REQUIRED" | "SKIPPED_MANUAL" | "UNCHA
 export interface SmartResult { status: SmartStatus; panel: SmartPanel; reason?: string }
 
 // Coordinates refer to the foreground image, exactly like the existing renderer.
-const slots = [
+export const SMART_LAYOUT_SLOTS = [
   { x: 0.05, y: 0.05, side: "left" }, { x: 0.95, y: 0.05, side: "right" },
   { x: 0.05, y: 0.30, side: "left" }, { x: 0.95, y: 0.30, side: "right" },
   { x: 0.05, y: 0.55, side: "left" }, { x: 0.95, y: 0.55, side: "right" },
@@ -79,7 +79,7 @@ export function smartLayoutPanel(original: SmartPanel, overwrite = false): Smart
     const subLines = panel.coverSubtitle ? wrapText((t) => measure(t, font * 0.42), panel.coverSubtitle, width * dims.width * 0.92).length : 0;
     const height = Math.max(0.12, (titleLines * font * 1.25 + subLines * font * 0.42 * 1.25 + (subLines ? font * 0.35 : 0)) / dims.height + 0.035);
     if (height > 0.31) return { status: "REVIEW_REQUIRED", panel: original, reason: "표지 제목이 너무 깁니다" };
-    panel.coverTitleBubble = clampBubbleRect({ x: 0.06, y: 0.045, width, height, font_size: font });
+    panel.coverTitleBubble = clampBubbleRect({ x: 0.06, y: 0.045, width, height, font_size: font, layout_source: "SMART_V1" as const });
     return { status: "PASS", panel };
   }
 
@@ -97,7 +97,7 @@ export function smartLayoutPanel(original: SmartPanel, overwrite = false): Smart
         { x: 0.95, y: 0.9 - size.height, side: "right" },
         { x: 0.5, y: 0.05, side: "center" },
       ], occupied);
-      if (placed) { panel.narrationBubble = { ...clampBubbleRect(placed.rect), font_size: font, preset: panel.narrationBubble?.preset ?? "dark", opacity: panel.narrationBubble?.opacity ?? 0.72 }; break; }
+      if (placed) { panel.narrationBubble = { ...clampBubbleRect(placed.rect), font_size: font, preset: panel.narrationBubble?.preset ?? "dark", opacity: panel.narrationBubble?.opacity ?? 0.72, layout_source: "SMART_V1" }; break; }
     }
     if (!placed) return { status: "REVIEW_REQUIRED", panel: original, reason: "내레이션을 배치할 공간이 없습니다" };
     occupied.push(placed.rect);
@@ -110,14 +110,14 @@ export function smartLayoutPanel(original: SmartPanel, overwrite = false): Smart
       const size = fitDialogue(item.text, font, 0.43);
       const lineCount = wrapText((t) => measure(t, font), item.text, size.width * dims.width * 0.8).length;
       if (lineCount * font * 1.3 > size.height * dims.height) continue;
-      placed = place(size, slots, occupied);
+      placed = place(size, SMART_LAYOUT_SLOTS, occupied);
       if (placed) { chosenFont = font; break; }
     }
     if (!placed) return { status: "REVIEW_REQUIRED", panel: original, reason: `대사 ${i + 1}을 겹치지 않게 배치할 수 없습니다` };
     const style = preferredStyle(item);
     const direction = placed.side === "left" ? "bottom-right" : placed.side === "right" ? "bottom-left" : "bottom-left";
     const hasTail = !["thought", "text_only", "whisper", "emphasis"].includes(style);
-    const bubble: ToonBubble = { ...clampBubbleRect(placed.rect), font_size: chosenFont, style, tail_direction: hasTail ? direction : "none", tail_enabled: hasTail, smart_layout_version: 1, opacity: style === "whisper" ? 0.85 : style === "soft" ? 0.94 : 1 };
+    const bubble: ToonBubble = { ...clampBubbleRect(placed.rect), font_size: chosenFont, style, tail_direction: hasTail ? direction : "none", tail_enabled: hasTail, smart_layout_version: 1, layout_source: "SMART_V1", opacity: style === "whisper" ? 0.85 : style === "soft" ? 0.94 : 1 };
     panel.dialogue[i] = { ...item, bubble };
     occupied.push(placed.rect);
   }
