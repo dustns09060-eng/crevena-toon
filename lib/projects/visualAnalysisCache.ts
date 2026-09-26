@@ -18,6 +18,11 @@ export function visualCachePath(identity: ImageIdentity): string {
 export function visualImageKey(identity: ImageIdentity): string {
   return createHash("sha256").update(`${identity.imageRowId}\0${identity.storagePath}\0${VISUAL_ANALYSIS_SCHEMA_VERSION}`).digest("hex");
 }
+/** Exact immutable-image paths; no prefix deletion and no other panel cache. */
+export function selectiveReanalysisPaths(identity: ImageIdentity): { cache: string; marker: string } {
+  const cache = visualCachePath(identity);
+  return { cache, marker: `${cache}.manual-reanalysis` };
+}
 export function validCachedAnalysis(value: unknown, identity: ImageIdentity): VisualCache | null {
   const parsed = VisualCacheSchema.safeParse(value);
   return parsed.success && parsed.data.image_identity.image_row_id === identity.imageRowId

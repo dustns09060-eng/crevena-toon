@@ -5,17 +5,18 @@ import { createClient } from "../supabase/server";
 import { getProject, getProjectPanels } from "./service";
 import { canArrangeV2, panelLayoutSource } from "../editor/layoutProvenance";
 import { smartLayoutV2, type VisualResult } from "../editor/visualScoring";
-import { getOrAnalyzeVisual, validCachedAnalysis, visualCachePath, visualImageKey, type ImageIdentity, type VisualCacheStore } from "./visualAnalysisCache";
+import { getOrAnalyzeVisual, selectiveReanalysisPaths, validCachedAnalysis, visualCachePath, visualImageKey, type ImageIdentity, type VisualCacheStore } from "./visualAnalysisCache";
 import { createGeminiVisualAnalyzer, prepareVisualImage, type VisualFailureCode } from "../../src/providers/geminiVisualAnalyzer";
-import { VISUAL_ANALYSIS_MODEL, type VisualCache } from "../../src/providers/visualAnalysisSchema";
+import { VISUAL_ANALYSIS_MODEL, summarizeVisualRegions, type VisualCache, type VisualRegionSummary } from "../../src/providers/visualAnalysisSchema";
 import { validateCoverTitleBubble, validateNarrationBubble, validateToonDialogue } from "../../src/db/validation";
 import type { ToonPanel } from "../../src/db/types";
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 type Target = { id: string; updatedAt: string; imageRowId: string; storagePath: string };
-export type PreviewEntry = { target: Target; result: VisualResult; analysis: "CACHED" | "ANALYZED" | "ANALYSIS_FAILED" | "NOT_NEEDED"; failureCode?: VisualFailureCode };
+export type PreviewEntry = { target: Target; result: VisualResult; analysis: "CACHED" | "ANALYZED" | "ANALYSIS_FAILED" | "NOT_NEEDED"; failureCode?: VisualFailureCode; summary?: VisualRegionSummary };
 const BUCKET = "toon-panels";
 const inFlight = new Set<string>();
+const reanalysisInFlight = new Set<string>();
 
 function smartPanel(panel: ToonPanel) {
   return { id: panel.id, panelType: panel.panel_type, dialogue: panel.dialogue, narration: panel.narration,
@@ -75,6 +76,35 @@ export async function visualCacheSummaryAction(projectId: string, overwrite = fa
   } catch { return { ok: false, message: "분석 cache 상태를 확인하지 못했습니다." }; }
 }
 
+/** A one-time, user-confirmed refresh of exactly one immutable image identity.
+ * The marker persists in the same project analysis namespace to bound cost. */
+export async function reanalyzeVisualAction(projectId: string, panelId: string, imageRowId: string, confirmed: boolean): Promise<{ ok: boolean; entries?: PreviewEntry[]; message?: string }> {
+  if (!confirmed) return { ok: false, message: "이미지 재분석 확인이 필요합니다." };
+  try {
+    const { supabase, panels, identities } = await owned(projectId);
+    const index = panels.findIndex((panel) => panel.id === panelId);
+    if (index < 0 || identities[index].imageRowId !== imageRowId) return { ok: false, message: "이미지가 변경됐습니다. 다시 확인해주세요." };
+    const identity = identities[index], paths = selectiveReanalysisPaths(identity);
+    if (reanalysisInFlight.has(paths.cache)) return { ok: false, message: "이미 재분석 중입니다." };
+    reanalysisInFlight.add(paths.cache);
+    try {
+      const store = cacheStore(supabase);
+      const cached = validCachedAnalysis(await store.read(paths.cache), identity);
+      if (!cached) return { ok: false, message: "재분석할 유효 cache가 없습니다." };
+      const { error: markerError } = await supabase.storage.from(BUCKET).upload(paths.marker,
+        JSON.stringify({ image_row_id: imageRowId, created_at: new Date().toISOString() }),
+        { contentType: "application/json", upsert: false });
+      if (markerError) return { ok: false, message: "이 이미지의 재분석은 이미 요청됐습니다." };
+      const { error: removeError } = await supabase.storage.from(BUCKET).remove([paths.cache]);
+      if (removeError) {
+        await supabase.storage.from(BUCKET).remove([paths.marker]);
+        return { ok: false, message: "분석 cache를 갱신하지 못했습니다." };
+      }
+      return await prepareSmartV2PreviewAction(projectId, true, panelId);
+    } finally { reanalysisInFlight.delete(paths.cache); }
+  } catch { return { ok: false, message: "이미지 재분석을 준비하지 못했습니다." }; }
+}
+
 export async function prepareSmartV2PreviewAction(projectId: string, overwrite: boolean, targetId: string | null = null): Promise<{ ok: boolean; entries?: PreviewEntry[]; message?: string }> {
   try {
     const { supabase, panels, identities } = await owned(projectId);
@@ -104,7 +134,8 @@ export async function prepareSmartV2PreviewAction(projectId: string, overwrite: 
         status: analysis.status, cacheHit: analysis.status === "CACHED", provider: "gemini", model: VISUAL_ANALYSIS_MODEL,
         latencyMs: Date.now() - started, regionCount: analysis.regions?.length ?? 0,
         failureCode: analysis.failureCode, attempts: analysis.attempts });
-      entries.push({ target, analysis: analysis.status, failureCode: analysis.failureCode, result: analysis.regions
+      entries.push({ target, analysis: analysis.status, failureCode: analysis.failureCode,
+        summary: analysis.regions ? summarizeVisualRegions(analysis.regions) : undefined, result: analysis.regions
         ? smartLayoutV2(original, analysis.regions, overwrite, visualImageKey(identity))
         : { status: "REVIEW_REQUIRED", panel: original, source, avoided: [], reason: "이미지 분석 실패", reasonCode: "ANALYSIS_FAILED" } });
     }
@@ -128,7 +159,7 @@ export async function applySmartV2Action(projectId: string, targets: Target[], o
       if (!cached) throw Error("분석 cache가 변경됐습니다. 다시 미리보기를 확인해주세요.");
       const result = smartLayoutV2(smartPanel(panels[index]), cached.regions, overwrite, visualImageKey(identities[index]));
       if (result.status === "REVIEW_REQUIRED") throw Error("검토가 필요한 컷은 자동 저장할 수 없습니다.");
-      if (result.status === "PASS") {
+      if (result.status === "PASS" || result.status === "PASS_WITH_WARNING") {
         const valid = panels[index].panel_type === "cover" ? validateCoverTitleBubble(result.panel.coverTitleBubble).valid
           : validateToonDialogue(result.panel.dialogue).valid && validateNarrationBubble(result.panel.narrationBubble).valid;
         if (!valid) throw Error("배치 검증에 실패했습니다.");
