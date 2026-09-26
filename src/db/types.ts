@@ -100,6 +100,7 @@ export type ToonBubbleTailDirection =
 export type ToonBubbleStyle = "round" | "thought" | "emphasis" | "normal" | "shout" | "whisper" | "soft" | "text_only";
 export type ToonDialogueEmotion = "neutral" | "happy" | "warm" | "sad" | "panic" | "surprised" | "angry" | "tired" | "determined";
 export type ToonNarrationPreset = "dark" | "light" | "cream" | "soft";
+export type ToonLayoutSource = "IMPORT_DEFAULT" | "SMART_V1" | "SMART_V2" | "MANUAL";
 
 /** 0~1 normalized 좌표. 해상도/디바이스가 달라져도 동일 상대 위치를 유지한다. */
 export interface ToonBubble {
@@ -120,6 +121,8 @@ export interface ToonBubble {
   tail_enabled?: boolean;
   /** Optional marker for geometry introduced by deterministic Smart Layout. */
   smart_layout_version?: 1;
+  layout_source?: ToonLayoutSource;
+  analysis_identity?: string;
   opacity?: number;
 }
 
@@ -143,6 +146,8 @@ export interface ToonNarrationBubble {
   font_size?: number;
   preset?: ToonNarrationPreset;
   opacity?: number;
+  layout_source?: ToonLayoutSource;
+  analysis_identity?: string;
 }
 
 /** 019 마이그레이션 — 표지/본문 컷 구분. */
@@ -158,6 +163,10 @@ export interface ToonCoverTitleBubble {
   width: number;
   height: number;
   font_size?: number;
+  /** v2 can keep the subtitle readable without changing legacy covers. */
+  subtitle_font_size?: number;
+  layout_source?: ToonLayoutSource;
+  analysis_identity?: string;
 }
 
 export interface ToonPanel {

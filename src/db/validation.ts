@@ -28,6 +28,7 @@ export const ToonBubbleTypeSchema = z.enum(["speech", "thought", "narration", "s
 export const ToonBubbleStyleSchema = z.enum(["round", "thought", "emphasis", "normal", "shout", "whisper", "soft", "text_only"]);
 export const ToonDialogueEmotionSchema = z.enum(["neutral", "happy", "warm", "sad", "panic", "surprised", "angry", "tired", "determined"]);
 export const ToonNarrationPresetSchema = z.enum(["dark", "light", "cream", "soft"]);
+export const ToonLayoutSourceSchema = z.enum(["IMPORT_DEFAULT", "SMART_V1", "SMART_V2", "MANUAL"]);
 
 export const ToonBubbleSchema = z
   .object({
@@ -41,6 +42,8 @@ export const ToonBubbleSchema = z
     tail_enabled: z.boolean().optional(),
     smart_layout_version: z.literal(1).optional(),
     opacity: z.number().min(0).max(1).optional(),
+    layout_source: ToonLayoutSourceSchema.optional(),
+    analysis_identity: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   })
   .refine((b) => b.x + b.width <= 1, {
     message: "x + width는 1을 초과할 수 없습니다 (말풍선이 이미지 오른쪽 밖으로 나감)",
@@ -59,6 +62,8 @@ export const ToonNarrationBubbleSchema = z
     width: z.number().gt(0).max(1),
     height: z.number().gt(0).max(1),
     font_size: z.number().min(8).max(96).optional(),
+    layout_source: ToonLayoutSourceSchema.optional(),
+    analysis_identity: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     preset: ToonNarrationPresetSchema.optional(),
     opacity: z.number().min(0).max(1).optional(),
   })
@@ -88,6 +93,9 @@ export const ToonCoverTitleBubbleSchema = z
     width: z.number().gt(0).max(1),
     height: z.number().gt(0).max(1),
     font_size: z.number().min(8).max(96).optional(),
+    subtitle_font_size: z.number().min(20).max(96).optional(),
+    layout_source: ToonLayoutSourceSchema.optional(),
+    analysis_identity: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   })
   .refine((b) => b.x + b.width <= 1, {
     message: "x + width는 1을 초과할 수 없습니다",
