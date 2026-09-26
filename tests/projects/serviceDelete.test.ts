@@ -122,4 +122,18 @@ describe("deleteProject", () => {
     const calls = (supabase as unknown as { _calls: Record<string, unknown[]> })._calls;
     expect(calls["storage.toon-panels.remove"]).toBeUndefined();
   });
+  test("해당 프로젝트의 analysis cache만 삭제하고 다른 프로젝트는 보존한다", async () => {
+    const supabase = createSupabaseMock({ project: OWNED_PROJECT, panels: [PANEL], storageFiles: {
+      "user-a/proj-1/analysis/panel-1": [{ name: "image-row-1" }],
+      "user-a/proj-1/analysis/panel-1/image-row-1": [{ name: "v1-hash.json" }, { name: "v1-hash.json.lock" }],
+      "user-a/proj-2/analysis/panel-1/image-row-1": [{ name: "unrelated.json" }],
+    } });
+    await (await import("../../lib/projects/service")).deleteProject(supabase, "proj-1");
+    const calls = (supabase as unknown as { _calls: Record<string, unknown[]> })._calls;
+    expect(calls["storage.toon-panels.remove"]).toEqual([[
+      "user-a/proj-1/analysis/panel-1/image-row-1/v1-hash.json",
+      "user-a/proj-1/analysis/panel-1/image-row-1/v1-hash.json.lock",
+    ]]);
+    expect((calls["storage.toon-panels.list"] as string[]).every((path) => !path.includes("proj-2"))).toBe(true);
+  });
 });

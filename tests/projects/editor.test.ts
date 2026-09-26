@@ -224,7 +224,7 @@ describe("saveBubbleLayoutAction", () => {
     const result = await saveBubbleLayoutAction("panel-1", dialogue, "새 내레이션", null);
     expect(result.ok).toBe(true);
     const updates = currentSupabase._calls["toon_panels.update"] as Record<string, unknown>[];
-    expect(updates[0]).toEqual({ dialogue, narration: "새 내레이션", narration_bubble: null });
+    expect(updates[0]).toEqual({ dialogue: dialogue.map((d) => ({ ...d, bubble: { ...d.bubble, layout_source: "MANUAL" } })), narration: "새 내레이션", narration_bubble: null });
   });
 
   test("프로젝트에 연결되지 않은 character_id가 있으면 거부된다", async () => {
@@ -258,7 +258,7 @@ describe("saveBubbleLayoutAction", () => {
     const result = await saveBubbleLayoutAction("panel-1", dialogue, null, null);
     expect(result.ok).toBe(true);
     const updates = currentSupabase._calls["toon_panels.update"] as Record<string, unknown>[];
-    expect(updates[0]).toEqual({ dialogue, narration: null, narration_bubble: null });
+    expect(updates[0]).toEqual({ dialogue: dialogue.map((d) => ({ ...d, bubble: { ...d.bubble, layout_source: "MANUAL" } })), narration: null, narration_bubble: null });
   });
 
   test("기존(레거시) dialogue를 그대로 다시 저장해도 tail_enabled가 임의로 추가되지 않는다(regression)", async () => {
@@ -381,7 +381,7 @@ describe("saveCoverLayoutAction", () => {
     expect(updates[0]).toEqual({
       cover_title: "육퇴하면 쉴 줄 알았지?",
       cover_subtitle: "체험단 마감이라는 진짜 최종 보스의 등장",
-      cover_title_bubble: bubble,
+      cover_title_bubble: { ...bubble, layout_source: "MANUAL" },
     });
   });
 
