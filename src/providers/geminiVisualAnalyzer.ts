@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
-import { VISUAL_ANALYSIS_MAX_SIDE, VISUAL_ANALYSIS_MODEL, VisualRegionsSchema, type VisualRegions } from "./visualAnalysisSchema";
+import { VISUAL_ANALYSIS_MAX_SIDE, VISUAL_ANALYSIS_MODEL, normalizeVisualResponse, type VisualRegions } from "./visualAnalysisSchema";
 
 export interface VisualAnalyzer { analyze(bytes: Uint8Array, mimeType: string): Promise<VisualRegions> }
 export const MAX_VISUAL_ATTEMPTS = 3;
@@ -65,10 +65,10 @@ export function createGeminiVisualAnalyzer(dependencies: {
         let value: unknown;
         try { value = JSON.parse(text ?? ""); }
         catch { throw new VisualAnalysisError("INVALID_STRUCTURED_RESPONSE", attempt); }
-        const parsed = VisualRegionsSchema.safeParse(value);
-        if (!parsed.success) throw new VisualAnalysisError("VALIDATION_FAILED", attempt);
+        const parsed = normalizeVisualResponse(value);
+        if (!parsed) throw new VisualAnalysisError("VALIDATION_FAILED", attempt);
         dependencies.onAttempt?.({ attempt, retry: false, latencyMs: Date.now() - started });
-        return parsed.data;
+        return parsed;
       } catch (error) {
         const failure = providerFailure(error, attempt);
         const retry = failure.failureCode === "PROVIDER_503" && attempt < MAX_VISUAL_ATTEMPTS;
