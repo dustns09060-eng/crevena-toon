@@ -6,14 +6,14 @@ import { getProject, getProjectPanels } from "./service";
 import { canArrangeV2, panelLayoutSource } from "../editor/layoutProvenance";
 import { smartLayoutV2, type VisualResult } from "../editor/visualScoring";
 import { getOrAnalyzeVisual, validCachedAnalysis, visualCachePath, visualImageKey, type ImageIdentity, type VisualCacheStore } from "./visualAnalysisCache";
-import { createGeminiVisualAnalyzer, prepareVisualImage } from "../../src/providers/geminiVisualAnalyzer";
+import { createGeminiVisualAnalyzer, prepareVisualImage, type VisualFailureCode } from "../../src/providers/geminiVisualAnalyzer";
 import { VISUAL_ANALYSIS_MODEL, type VisualCache } from "../../src/providers/visualAnalysisSchema";
 import { validateCoverTitleBubble, validateNarrationBubble, validateToonDialogue } from "../../src/db/validation";
 import type { ToonPanel } from "../../src/db/types";
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 type Target = { id: string; updatedAt: string; imageRowId: string; storagePath: string };
-export type PreviewEntry = { target: Target; result: VisualResult; analysis: "CACHED" | "ANALYZED" | "ANALYSIS_FAILED" | "NOT_NEEDED" };
+export type PreviewEntry = { target: Target; result: VisualResult; analysis: "CACHED" | "ANALYZED" | "ANALYSIS_FAILED" | "NOT_NEEDED"; failureCode?: VisualFailureCode };
 const BUCKET = "toon-panels";
 const inFlight = new Set<string>();
 
@@ -79,7 +79,7 @@ export async function prepareSmartV2PreviewAction(projectId: string, overwrite: 
   try {
     const { supabase, panels, identities } = await owned(projectId);
     if (targetId && !panels.some((p) => p.id === targetId)) throw Error("컷을 찾을 수 없습니다.");
-    const store = cacheStore(supabase), analyzer = createGeminiVisualAnalyzer();
+    const store = cacheStore(supabase);
     const entries: PreviewEntry[] = [];
     for (const [index, panel] of panels.entries()) {
       const identity = identities[index];
@@ -90,6 +90,11 @@ export async function prepareSmartV2PreviewAction(projectId: string, overwrite: 
         continue;
       }
       const started = Date.now();
+      const analyzer = createGeminiVisualAnalyzer({ onAttempt: (event) => console.info("[smart-layout-visual-attempt]", {
+        projectId, panelId: panel.id, imageRowId: identity.imageRowId, provider: "gemini", model: VISUAL_ANALYSIS_MODEL,
+        attempt: event.attempt, httpStatus: event.httpStatus, providerStatus: event.providerStatus,
+        failureCode: event.failureCode, retry: event.retry, latencyMs: event.latencyMs,
+      }) });
       const analysis = await getOrAnalyzeVisual(identity, store, analyzer, async () => {
         const { data, error } = await supabase.storage.from(BUCKET).download(identity.storagePath);
         if (error || !data) throw Error("원본 이미지를 읽지 못했습니다.");
@@ -97,8 +102,9 @@ export async function prepareSmartV2PreviewAction(projectId: string, overwrite: 
       }, prepareVisualImage);
       console.info("[smart-layout-visual]", { projectId, panelId: panel.id, imageRowId: identity.imageRowId,
         status: analysis.status, cacheHit: analysis.status === "CACHED", provider: "gemini", model: VISUAL_ANALYSIS_MODEL,
-        latencyMs: Date.now() - started, regionCount: analysis.regions?.length ?? 0 });
-      entries.push({ target, analysis: analysis.status, result: analysis.regions
+        latencyMs: Date.now() - started, regionCount: analysis.regions?.length ?? 0,
+        failureCode: analysis.failureCode, attempts: analysis.attempts });
+      entries.push({ target, analysis: analysis.status, failureCode: analysis.failureCode, result: analysis.regions
         ? smartLayoutV2(original, analysis.regions, overwrite, visualImageKey(identity))
         : { status: "REVIEW_REQUIRED", panel: original, source, avoided: [], reason: "이미지 분석 실패", reasonCode: "ANALYSIS_FAILED" } });
     }

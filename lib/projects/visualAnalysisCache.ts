@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { VISUAL_ANALYSIS_MODEL, VISUAL_ANALYSIS_SCHEMA_VERSION, VisualCacheSchema, type VisualCache, type VisualRegions } from "../../src/providers/visualAnalysisSchema";
-import type { VisualAnalyzer } from "../../src/providers/geminiVisualAnalyzer";
+import { VisualAnalysisError, type VisualAnalyzer, type VisualFailureCode } from "../../src/providers/geminiVisualAnalyzer";
 
 export type ImageIdentity = { userId: string; projectId: string; panelId: string; imageRowId: string; storagePath: string };
 export type AnalysisStatus = "CACHED" | "ANALYZED" | "ANALYSIS_FAILED";
+export type AnalysisResult = { status: AnalysisStatus; regions: VisualRegions["regions"] | null; failureCode?: VisualFailureCode; attempts?: number };
 export interface VisualCacheStore {
   read(path: string): Promise<unknown | null>;
   write(path: string, data: VisualCache): Promise<void>;
@@ -23,9 +24,9 @@ export function validCachedAnalysis(value: unknown, identity: ImageIdentity): Vi
     && parsed.data.image_identity.storage_path === identity.storagePath ? parsed.data : null;
 }
 
-const running = new Map<string, Promise<{ status: AnalysisStatus; regions: VisualRegions["regions"] | null }>>();
+const running = new Map<string, Promise<AnalysisResult>>();
 export async function getOrAnalyzeVisual(identity: ImageIdentity, store: VisualCacheStore, analyzer: VisualAnalyzer,
-  loadImage: () => Promise<Uint8Array>, prepareImage: (bytes: Uint8Array) => Promise<Uint8Array>): Promise<{ status: AnalysisStatus; regions: VisualRegions["regions"] | null }> {
+  loadImage: () => Promise<Uint8Array>, prepareImage: (bytes: Uint8Array) => Promise<Uint8Array>): Promise<AnalysisResult> {
   const path = visualCachePath(identity);
   const existing = validCachedAnalysis(await store.read(path).catch(() => null), identity);
   if (existing) return { status: "CACHED", regions: existing.regions };
@@ -42,24 +43,33 @@ export async function getOrAnalyzeVisual(identity: ImageIdentity, store: VisualC
             const shared = validCachedAnalysis(await store.read(path).catch(() => null), identity);
             if (shared) return { status: "CACHED" as const, regions: shared.regions };
           }
-          throw Error("다른 요청의 이미지 분석이 완료되지 않았습니다.");
+          throw new VisualAnalysisError("CACHE_LOCK_TIMEOUT");
         }
         // The winner may have completed between the initial read and lock acquisition.
         const shared = validCachedAnalysis(await store.read(path).catch(() => null), identity);
         if (shared) return { status: "CACHED" as const, regions: shared.regions };
       }
-      const prepared = await prepareImage(await loadImage());
+      let bytes: Uint8Array;
+      try { bytes = await loadImage(); }
+      catch { throw new VisualAnalysisError("IMAGE_DOWNLOAD_FAILED"); }
+      let prepared: Uint8Array;
+      try { prepared = await prepareImage(bytes); }
+      catch { throw new VisualAnalysisError("IMAGE_PREPROCESS_FAILED"); }
       const result = await analyzer.analyze(prepared, "image/png");
-      const cache = VisualCacheSchema.parse({ schema_version: VISUAL_ANALYSIS_SCHEMA_VERSION,
+      const parsed = VisualCacheSchema.safeParse({ schema_version: VISUAL_ANALYSIS_SCHEMA_VERSION,
         image_identity: { image_row_id: identity.imageRowId, storage_path: identity.storagePath },
         regions: result.regions, provider: "gemini", model: VISUAL_ANALYSIS_MODEL, created_at: new Date().toISOString() });
+      if (!parsed.success) throw new VisualAnalysisError("VALIDATION_FAILED");
+      const cache = parsed.data;
       try { await store.write(path, cache); }
       catch {
         // Another instance may have completed the same immutable identity first.
-        if (!validCachedAnalysis(await store.read(path).catch(() => null), identity)) throw Error("분석 cache 저장 실패");
+        if (!validCachedAnalysis(await store.read(path).catch(() => null), identity)) throw new VisualAnalysisError("CACHE_WRITE_FAILED");
       }
       return { status: "ANALYZED" as const, regions: cache.regions };
-    } catch { return { status: "ANALYSIS_FAILED" as const, regions: null }; }
+    } catch (error) { return { status: "ANALYSIS_FAILED" as const, regions: null,
+      failureCode: error instanceof VisualAnalysisError ? error.failureCode : "UNKNOWN",
+      attempts: error instanceof VisualAnalysisError ? error.attempts : 0 }; }
     finally {
       if (locked) await store.unlock?.(path).catch(() => undefined);
       running.delete(path);
