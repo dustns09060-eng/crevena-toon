@@ -68,7 +68,7 @@ export function buildImportUpdates(doc: DialogueImportDocument, panels: ToonPane
   const coverValues = {
     cover_title: doc.cover.title || null,
     cover_subtitle: doc.cover.subtitle || null,
-    cover_title_bubble: doc.cover.title ? (cover.cover_title_bubble ?? getDefaultCoverTitleBubble()) : null,
+    cover_title_bubble: doc.cover.title ? (cover.cover_title_bubble ?? { ...getDefaultCoverTitleBubble(), layout_source: "IMPORT_DEFAULT" as const }) : null,
   };
   if (!validateCoverTitleBubble(coverValues.cover_title_bubble).valid) throw Error("표지 배치가 올바르지 않습니다.");
   return [
@@ -77,11 +77,11 @@ export function buildImportUpdates(doc: DialogueImportDocument, panels: ToonPane
       const panel = panels.find((p) => p.panel_number === incoming.panel_number + 1)!;
       const dialogue: ToonDialogueItem[] = incoming.dialogue.map((d, i) => ({
         id: makeId(), character_id: characters.find((c) => c.display_name === d.speaker)!.id,
-        text: d.text, bubble_type: "speech", bubble: { ...getDefaultBubbleForIndex(i), style: d.bubble_style ?? (d.emotion === "panic" || d.emotion === "surprised" ? "shout" : d.emotion === "warm" ? "soft" : "round") },
+        text: d.text, bubble_type: "speech", bubble: { ...getDefaultBubbleForIndex(i), layout_source: "IMPORT_DEFAULT", style: d.bubble_style ?? (d.emotion === "panic" || d.emotion === "surprised" ? "shout" : d.emotion === "warm" ? "soft" : "round") },
         ...(d.emotion ? { emotion: d.emotion } : {}),
       }));
       const narration = (typeof incoming.narration === "object" && incoming.narration !== null ? incoming.narration.text : incoming.narration)?.trim() || null;
-      const narration_bubble = narration ? { ...(panel.narration_bubble ?? getDefaultNarrationBubble()), ...(typeof incoming.narration === "object" && incoming.narration !== null && incoming.narration.style ? { preset: incoming.narration.style } : {}) } : null;
+      const narration_bubble = narration ? { ...(panel.narration_bubble ?? { ...getDefaultNarrationBubble(), layout_source: "IMPORT_DEFAULT" as const }), ...(typeof incoming.narration === "object" && incoming.narration !== null && incoming.narration.style ? { preset: incoming.narration.style } : {}) } : null;
       if (!validateToonDialogue(dialogue).valid || !validateDialogueCharacterIds(dialogue, characters.map((c) => c.id)).valid
         || !validateNarrationBubble(narration_bubble).valid) throw Error("대사 또는 내레이션 배치가 올바르지 않습니다.");
       return { panel, values: { dialogue, narration, narration_bubble } };

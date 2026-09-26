@@ -21,6 +21,11 @@ import type { ToonCoverTitleBubble, ToonDialogueItem, ToonNarrationBubble, ToonP
  */
 
 const PANELS_BUCKET = "toon-panels";
+function markManual<T extends { analysis_identity?: string }>(layout: T): Omit<T, "analysis_identity"> & { layout_source: "MANUAL" } {
+  const { analysis_identity: _previous, ...rest } = layout;
+  void _previous;
+  return { ...rest, layout_source: "MANUAL" };
+}
 
 type RequireOwnedProjectResult =
   | { error: string }
@@ -166,9 +171,11 @@ export async function saveBubbleLayoutAction(
     return { ok: false, message: `내레이션 배치가 올바르지 않습니다: ${narrationBubbleValidation.errors.join(", ")}` };
   }
 
+  const manualDialogue = dialogue.map((item) => ({ ...item, bubble: item.bubble && markManual(item.bubble) }));
+  const manualNarration = narrationBubble && markManual(narrationBubble);
   const { error: updateErr } = await supabase
     .from("toon_panels")
-    .update({ dialogue, narration, narration_bubble: narrationBubble })
+    .update({ dialogue: manualDialogue, narration, narration_bubble: manualNarration })
     .eq("id", panelId);
   if (updateErr) return { ok: false, message: "저장에 실패했습니다." };
 
@@ -209,9 +216,10 @@ export async function saveCoverLayoutAction(
     return { ok: false, message: `표지 배치가 올바르지 않습니다: ${bubbleValidation.errors.join(", ")}` };
   }
 
+  const manualCover = coverTitleBubble && markManual(coverTitleBubble);
   const { error: updateErr } = await supabase
     .from("toon_panels")
-    .update({ cover_title: coverTitle, cover_subtitle: coverSubtitle, cover_title_bubble: coverTitleBubble })
+    .update({ cover_title: coverTitle, cover_subtitle: coverSubtitle, cover_title_bubble: manualCover })
     .eq("id", panelId);
   if (updateErr) return { ok: false, message: "저장에 실패했습니다." };
 

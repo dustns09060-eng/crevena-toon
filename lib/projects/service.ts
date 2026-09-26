@@ -110,9 +110,20 @@ export async function cleanupProjectStorage(
   supabase: SupabaseClient,
   userId: string,
   projectId: string,
-  panelNumbers: number[]
+  panelNumbers: number[],
+  panelIds: string[] = []
 ): Promise<void> {
   const allPaths: string[] = [];
+  async function listAll(prefix: string) {
+    const entries: { name: string }[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase.storage.from(PANELS_BUCKET).list(prefix, { limit: 1000, offset });
+      if (error) throw error;
+      entries.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    return entries;
+  }
 
   for (const panelNumber of panelNumbers) {
     for (const sub of ["raw", "final", "external"] as const) {
@@ -122,6 +133,16 @@ export async function cleanupProjectStorage(
       if (files && files.length > 0) {
         allPaths.push(...files.map((f: { name: string }) => `${prefix}/${f.name}`));
       }
+    }
+  }
+
+  // Analysis cache lives only under this project's panel/image identity folders.
+  for (const panelId of panelIds) {
+    const panelPrefix = `${userId}/${projectId}/analysis/${panelId}`;
+    for (const folder of await listAll(panelPrefix)) {
+      const imagePrefix = `${panelPrefix}/${folder.name}`;
+      allPaths.push(...(await listAll(imagePrefix)).filter((file) => file.name.endsWith(".json") || file.name.endsWith(".json.lock"))
+        .map((file) => `${imagePrefix}/${file.name}`));
     }
   }
 
@@ -136,7 +157,7 @@ export async function deleteProject(supabase: SupabaseClient, projectId: string)
   if (!project) return { deleted: false, reason: "not_found" };
 
   const panels = await getProjectPanels(supabase, projectId);
-  await cleanupProjectStorage(supabase, project.user_id, projectId, panels.map((p) => p.panel_number));
+  await cleanupProjectStorage(supabase, project.user_id, projectId, panels.map((p) => p.panel_number), panels.map((p) => p.id));
 
   // toon_panels/toon_project_characters/toon_captions/toon_generations(project_id)는
   // FK ON DELETE CASCADE/SET NULL로 자동 정리된다 (STEP 1 설계).

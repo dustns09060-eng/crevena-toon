@@ -6,6 +6,7 @@ import { getProject, getProjectPanels } from "./service";
 import { smartLayoutPanel, type SmartPanel } from "../editor/smartLayout";
 import { validateCoverTitleBubble, validateNarrationBubble, validateToonDialogue } from "../../src/db/validation";
 import type { ToonPanel } from "../../src/db/types";
+import { canAutomaticallyArrange, panelLayoutSource } from "../editor/layoutProvenance";
 
 type Target = { id: string; updatedAt: string };
 type Result = { ok: boolean; message: string; count?: number };
@@ -17,7 +18,7 @@ function storedSmartPanel(panel: ToonPanel): SmartPanel {
     narration: panel.narration, narrationBubble: panel.narration_bubble,
     coverTitle: panel.cover_title, coverSubtitle: panel.cover_subtitle,
     coverTitleBubble: panel.cover_title_bubble,
-    hasStoredLayout: panel.panel_type === "cover" ? Boolean(panel.cover_title_bubble) : panel.dialogue.some((d) => Boolean(d.bubble)) || Boolean(panel.narration_bubble),
+    hasStoredLayout: !canAutomaticallyArrange(panelLayoutSource({ panelType: panel.panel_type, coverTitleBubble: panel.cover_title_bubble, dialogue: panel.dialogue, narrationBubble: panel.narration_bubble })),
   };
 }
 
