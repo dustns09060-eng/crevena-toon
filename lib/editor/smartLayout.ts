@@ -13,7 +13,7 @@ export interface SmartPanel {
   /** True only for layouts stored in the DB; synthetic Editor defaults do not count. */
   hasStoredLayout: boolean;
 }
-export type SmartStatus = "PASS" | "REVIEW_REQUIRED" | "SKIPPED_MANUAL" | "UNCHANGED";
+export type SmartStatus = "PASS" | "PASS_WITH_WARNING" | "REVIEW_REQUIRED" | "SKIPPED_MANUAL" | "UNCHANGED";
 export interface SmartResult { status: SmartStatus; panel: SmartPanel; reason?: string }
 
 // Coordinates refer to the foreground image, exactly like the existing renderer.
