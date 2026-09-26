@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { scoreCandidate, scoreTail, smartLayoutV2, VISUAL_WEIGHTS, type Rect } from "../../lib/editor/visualScoring";
+import { objectOverlapRatios, scoreCandidate, scoreTail, smartLayoutV2, VISUAL_WEIGHTS, type Rect } from "../../lib/editor/visualScoring";
 import type { VisualRegion } from "../../src/providers/visualAnalysisSchema";
 import type { SmartPanel } from "../../lib/editor/smartLayout";
 import { getDefaultBubbleForIndex } from "../../lib/editor/bubbleLayout";
@@ -40,6 +40,17 @@ describe("visual candidate scoring", () => {
     expect(scoreTail(bubble, "bottom-right", [hair], [])).toBeGreaterThan(0);
     expect(scoreTail(bubble, "right", [hair], [])).toBe(0);
     expect(scoreTail(bubble, "bottom-right", [region("face", { x: hair.x, y: hair.y, width: hair.width, height: hair.height })], [])).toBe(Infinity);
+  });
+  test("partial pencil-case overlap is measured against both object and narration", () => {
+    const narration = { x: 0.6, y: 0.8, width: 0.25, height: 0.08 };
+    const pencil = region("important_object", { x: 0.5, y: 0.74, width: 0.2, height: 0.12 }, 0.95, "pencil case");
+    expect(objectOverlapRatios(narration, pencil).object).toBeGreaterThan(0.1);
+    expect(objectOverlapRatios(narration, pencil).text).toBeGreaterThan(0.2);
+    expect(scoreCandidate(narration, [pencil], [], narration)).toBeGreaterThan(VISUAL_WEIGHTS.warningLimit);
+  });
+  test("pre-existing image text and face stay hard constraints", () => {
+    expect(scoreCandidate(rect, [region("text_or_logo", rect)], [], rect)).toBe(Infinity);
+    expect(scoreCandidate(rect, [region("face", rect)], [], rect)).toBe(Infinity);
   });
 });
 
@@ -91,6 +102,49 @@ describe("v2 layout fixtures", () => {
     expect(result.status).toBe("PASS");
     expect(result.panel.coverTitleBubble?.x).not.toBe(0.06);
     expect(result.panel.coverTitleBubble?.subtitle_font_size).toBeGreaterThanOrEqual(20);
+  });
+  test("cover evaluates top-right then middle when upper face boxes block all top slots", () => {
+    const cover = { ...scene(null as unknown as string), panelType: "cover" as const,
+      coverTitle: "육아맘, 간호조무사 도전기", coverSubtitle: "EP.01 엄마도 공부하러 갑니다" };
+    const left = smartLayoutV2(cover, [region("face", { x: 0.01, y: 0.01, width: 0.25, height: 0.18 })]);
+    expect(left.status).toBe("PASS");
+    expect(left.panel.coverTitleBubble!.x).toBeGreaterThan(0.1);
+    const upper = smartLayoutV2(cover, [region("face", { x: 0, y: 0, width: 1, height: 0.29 })]);
+    expect(["PASS", "PASS_WITH_WARNING"]).toContain(upper.status);
+    expect(upper.panel.coverTitleBubble!.y).toBeGreaterThanOrEqual(0.3);
+    expect(upper.panel.coverTitleBubble!.subtitle_font_size).toBeGreaterThanOrEqual(20);
+    expect(upper).toEqual(smartLayoutV2(cover, [region("face", { x: 0, y: 0, width: 1, height: 0.29 })]));
+  });
+  test("cover widens a long subtitle before shrinking below readable font", () => {
+    const cover = { ...scene(null as unknown as string), panelType: "cover" as const,
+      coverTitle: "육아맘 도전기", coverSubtitle: "가".repeat(28) };
+    const result = smartLayoutV2(cover, []);
+    expect(result.status).toBe("PASS");
+    expect(result.panel.coverTitleBubble!.width).toBeGreaterThanOrEqual(0.72);
+    expect(result.panel.coverTitleBubble!.subtitle_font_size).toBeGreaterThanOrEqual(20);
+  });
+  test("small body or walking edge overlap warns, while face never passes", () => {
+    const body = region("body", { x: 0.1, y: 0.05, width: 0.24, height: 0.1 }, 0.2);
+    const b = smartLayoutV2(scene(), [body]);
+    expect(["PASS", "PASS_WITH_WARNING"]).toContain(b.status);
+    const action = region("action", { x: 0.1, y: 0.9, width: 0.4, height: 0.07 }, 0.8, "walking");
+    const walking = smartLayoutV2(scene(), [action]);
+    expect(["PASS", "PASS_WITH_WARNING"]).toContain(walking.status);
+    expect(scoreCandidate(rect, [region("face", rect)], [], rect)).toBe(Infinity);
+  });
+  test("warning threshold and bounded deterministic candidate search", () => {
+    expect(VISUAL_WEIGHTS.candidateLimit).toBeLessThanOrEqual(600);
+    const regions = [region("body", { x: 0.02, y: 0.02, width: 0.96, height: 0.94 }, 0.25)];
+    const first = smartLayoutV2(scene("짧은 내레이션"), regions);
+    expect(first.status).toBe("PASS_WITH_WARNING");
+    expect(first.warnings).toContain("LOW_IMPORTANCE_BODY_OVERLAP");
+    expect(first).toEqual(smartLayoutV2(scene("짧은 내레이션"), regions));
+  });
+  test("walking action occupying every candidate produces a warning rather than an unsafe PASS", () => {
+    const walking = region("action", { x: 0.025, y: 0.025, width: 0.95, height: 0.95 }, 0.2, "walking");
+    const result = smartLayoutV2(scene("길을 걷는 가족"), [walking]);
+    expect(result.status).toBe("PASS_WITH_WARNING");
+    expect(result.warnings).toContain("ACTION_EDGE_OVERLAP");
   });
   test("no safe slot requests review, never saves an overlap", () => {
     const result = smartLayoutV2(scene(), [region("face", { x: 0, y: 0, width: 1, height: 1 })]);
