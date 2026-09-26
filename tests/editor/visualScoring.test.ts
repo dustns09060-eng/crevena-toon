@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { scoreCandidate, smartLayoutV2, VISUAL_WEIGHTS, type Rect } from "../../lib/editor/visualScoring";
+import { scoreCandidate, scoreTail, smartLayoutV2, VISUAL_WEIGHTS, type Rect } from "../../lib/editor/visualScoring";
 import type { VisualRegion } from "../../src/providers/visualAnalysisSchema";
 import type { SmartPanel } from "../../lib/editor/smartLayout";
 import { getDefaultBubbleForIndex } from "../../lib/editor/bubbleLayout";
@@ -26,6 +26,21 @@ describe("visual candidate scoring", () => {
     expect(scoreCandidate(rect, [], [], rect)).toBe(-VISUAL_WEIGHTS.stability);
     expect(scoreCandidate(rect, [], [], rect)).toBe(scoreCandidate(rect, [], [], rect));
   });
+  test("pencil case safety margin and high importance beat preferred slot stability", () => {
+    const preferred = { x: 0.3, y: 0.82, width: 0.35, height: 0.1 };
+    const caseBox = region("important_object", { x: 0.66, y: 0.83, width: 0.12, height: 0.1 }, 0.95, "pencil case");
+    expect(scoreCandidate(preferred, [caseBox], [], preferred)).toBeGreaterThan(VISUAL_WEIGHTS.safeLimit);
+    expect(scoreCandidate({ ...preferred, x: 0.05 }, [caseBox], [], preferred)).toBe(0);
+    expect(scoreCandidate(preferred, [caseBox], [], preferred)).toBeGreaterThan(scoreCandidate({ ...preferred, x: 0.05 }, [caseBox], [], preferred));
+  });
+  test("tail triangle is scored even when bubble body is safe", () => {
+    const bubble = { x: 0.05, y: 0.05, width: 0.25, height: 0.12 };
+    const hair = region("hair", { x: 0.26, y: 0.177, width: 0.04, height: 0.05 });
+    expect(scoreCandidate(bubble, [hair], [], bubble)).toBe(-VISUAL_WEIGHTS.stability);
+    expect(scoreTail(bubble, "bottom-right", [hair], [])).toBeGreaterThan(0);
+    expect(scoreTail(bubble, "right", [hair], [])).toBe(0);
+    expect(scoreTail(bubble, "bottom-right", [region("face", { x: hair.x, y: hair.y, width: hair.width, height: hair.height })], [])).toBe(Infinity);
+  });
 });
 
 describe("v2 layout fixtures", () => {
@@ -38,6 +53,29 @@ describe("v2 layout fixtures", () => {
       expect(result.avoided).toContain(label);
       expect(result.panel.narrationBubble?.layout_source).toBe("SMART_V2");
     }
+  });
+  test("Panel 6 pencil case margin, and Panel 9 notebooks plus laptop remain clear", () => {
+    const pencil = region("important_object", { x: 0.64, y: 0.82, width: 0.16, height: 0.14 }, 0.95, "pencil case");
+    const sixth = smartLayoutV2(scene(), [pencil]);
+    expect(sixth.status).toBe("PASS");
+    expect(scoreCandidate(sixth.panel.narrationBubble!, [pencil], [], sixth.panel.narrationBubble!)).toBeLessThan(0);
+    const laptop = region("important_object", { x: 0.33, y: 0.8, width: 0.32, height: 0.16 }, 1, "laptop");
+    const notebooks = region("important_object", { x: 0.66, y: 0.8, width: 0.2, height: 0.16 }, 0.9, "notebooks");
+    const ninth = smartLayoutV2(scene(), [laptop, notebooks]);
+    expect(ninth.status).toBe("PASS");
+    expect(scoreCandidate(ninth.panel.narrationBubble!, [laptop, notebooks], [], ninth.panel.narrationBubble!)).toBeLessThan(0);
+  });
+  test("Panel 7 prefers a safe tail direction when body is clear and hair touches only tail", () => {
+    const p = scene(null as unknown as string);
+    p.dialogue = [{ id: "1", character_id: "2", bubble_type: "speech", text: "안녕!", bubble: { ...getDefaultBubbleForIndex(0), style: "soft", layout_source: "IMPORT_DEFAULT" } }];
+    const baseline = smartLayoutV2(p, []);
+    expect(baseline.status).toBe("PASS");
+    const bubble = baseline.panel.dialogue[0].bubble!;
+    const hair = region("hair", { x: bubble.x + bubble.width * 0.8, y: bubble.y + bubble.height + 0.007, width: 0.06, height: 0.04 });
+    const result = smartLayoutV2(p, [hair]);
+    expect(result.status).toBe("PASS");
+    const selected = result.panel.dialogue[0].bubble!;
+    expect(scoreTail(selected, selected.tail_direction, [hair], [])).toBe(0);
   });
   test("safe v1 preferred position stays stable", () => {
     const result = smartLayoutV2(scene(), []);
