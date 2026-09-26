@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { getOrAnalyzeVisual, validCachedAnalysis, visualCachePath } from "../../lib/projects/visualAnalysisCache";
 import { VisualCacheSchema, VisualRegionsSchema, VISUAL_ANALYSIS_SCHEMA_VERSION } from "../../src/providers/visualAnalysisSchema";
-import { createGeminiVisualAnalyzer, MAX_VISUAL_ATTEMPTS, prepareVisualImage } from "../../src/providers/geminiVisualAnalyzer";
+import { createGeminiVisualAnalyzer, MAX_VISUAL_ATTEMPTS, prepareVisualImage, VisualAnalysisError } from "../../src/providers/geminiVisualAnalyzer";
 import sharp from "sharp";
 
 const identity = { userId: "u", projectId: "p", panelId: "panel", imageRowId: "11111111-1111-4111-8111-111111111111", storagePath: "u/p/external/1/immutable.png" };
@@ -62,14 +62,63 @@ describe("Visual cache and schema", () => {
     expect(generate).toHaveBeenCalledTimes(MAX_VISUAL_ATTEMPTS);
     expect(sleep.mock.calls).toHaveLength(2);
     const bad = vi.fn().mockRejectedValue(Object.assign(Error("quota"), { status: 429 }));
-    await expect(createGeminiVisualAnalyzer({ generate: bad, sleep }).analyze(new Uint8Array([1]), "image/png")).rejects.toThrow("quota");
+    await expect(createGeminiVisualAnalyzer({ generate: bad, sleep }).analyze(new Uint8Array([1]), "image/png")).rejects.toMatchObject({ failureCode: "PROVIDER_ERROR", attempts: 1, httpStatus: 429 });
     expect(bad).toHaveBeenCalledTimes(1);
     const exhausted = vi.fn().mockRejectedValue(failure);
-    await expect(createGeminiVisualAnalyzer({ generate: exhausted, sleep }).analyze(new Uint8Array([1]), "image/png")).rejects.toThrow("temporary");
+    await expect(createGeminiVisualAnalyzer({ generate: exhausted, sleep }).analyze(new Uint8Array([1]), "image/png")).rejects.toMatchObject({ failureCode: "PROVIDER_503", attempts: 3 });
     expect(exhausted).toHaveBeenCalledTimes(3);
     const malformed = vi.fn().mockResolvedValue("not json");
     await expect(createGeminiVisualAnalyzer({ generate: malformed, sleep }).analyze(new Uint8Array([1]), "image/png")).rejects.toThrow();
     expect(malformed).toHaveBeenCalledTimes(1);
+  });
+  test("structured failure codes and attempt logs distinguish response and provider failures", async () => {
+    const sleep = vi.fn(async () => {}), onAttempt = vi.fn();
+    const call = async (generate: () => Promise<string>) => createGeminiVisualAnalyzer({ generate, sleep, onAttempt }).analyze(new Uint8Array([1]), "image/png");
+    await expect(call(async () => "{" )).rejects.toMatchObject({ failureCode: "INVALID_STRUCTURED_RESPONSE", attempts: 1 });
+    await expect(call(async () => JSON.stringify({ regions: [{ type: "face", x: 1.1 }] }))).rejects.toMatchObject({ failureCode: "VALIDATION_FAILED", attempts: 1 });
+    for (const status of [400, 401, 403, 429]) {
+      const generate = vi.fn().mockRejectedValue(Object.assign(Error("do not log"), { status, code: "UNAVAILABLE" }));
+      await expect(call(generate)).rejects.toMatchObject({ failureCode: "PROVIDER_ERROR", attempts: 1, httpStatus: status });
+      expect(generate).toHaveBeenCalledTimes(1);
+    }
+    const generate = vi.fn().mockRejectedValueOnce(Object.assign(Error("temporary"), { status: "UNAVAILABLE" })).mockResolvedValue(JSON.stringify({ regions: [] }));
+    await call(generate);
+    expect(onAttempt).toHaveBeenCalledWith(expect.objectContaining({ attempt: 1, failureCode: "PROVIDER_503", retry: true }));
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+  test("failed analysis never becomes reusable cache; successful existing cache is preserved", async () => {
+    const { cache, store, analyzer, load, prepare } = setup();
+    const good = { ...identity, panelId: "good" }, bad = { ...identity, panelId: "bad" };
+    cache.set(visualCachePath(good), fixture);
+    analyzer.analyze.mockRejectedValueOnce(new VisualAnalysisError("VALIDATION_FAILED", 1));
+    expect(await getOrAnalyzeVisual(bad, store, analyzer, load, prepare)).toMatchObject({ status: "ANALYSIS_FAILED", failureCode: "VALIDATION_FAILED", attempts: 1 });
+    expect(store.write).not.toHaveBeenCalled();
+    expect(await getOrAnalyzeVisual(good, store, analyzer, load, prepare)).toMatchObject({ status: "CACHED" });
+    expect(analyzer.analyze).toHaveBeenCalledTimes(1);
+    expect((await getOrAnalyzeVisual(bad, store, analyzer, load, prepare)).status).toBe("ANALYZED");
+    expect(analyzer.analyze).toHaveBeenCalledTimes(2);
+  });
+  test("image download, preprocessing and lock timeout have distinct codes", async () => {
+    const { store, analyzer, load, prepare } = setup();
+    load.mockRejectedValueOnce(Error("private URL"));
+    expect(await getOrAnalyzeVisual(identity, store, analyzer, load, prepare)).toMatchObject({ failureCode: "IMAGE_DOWNLOAD_FAILED" });
+    prepare.mockRejectedValueOnce(Error("invalid bytes"));
+    expect(await getOrAnalyzeVisual(identity, store, analyzer, load, prepare)).toMatchObject({ failureCode: "IMAGE_PREPROCESS_FAILED" });
+    expect(store.write).not.toHaveBeenCalled();
+  });
+  test("seven valid cache objects are reused on the next preview; four failures remain uncached", async () => {
+    const { cache, store, analyzer, load, prepare } = setup();
+    const identities = Array.from({ length: 11 }, (_, i) => ({ ...identity, panelId: `panel-${i}` }));
+    for (const item of identities.slice(0, 7)) cache.set(visualCachePath(item), fixture);
+    analyzer.analyze.mockRejectedValue(new VisualAnalysisError("PROVIDER_503", 3, 503, "UNAVAILABLE"));
+    const first = await Promise.all(identities.map((item) => getOrAnalyzeVisual(item, store, analyzer, load, prepare)));
+    expect(first.map((item) => item.status)).toEqual([...Array(7).fill("CACHED"), ...Array(4).fill("ANALYSIS_FAILED")]);
+    expect(analyzer.analyze).toHaveBeenCalledTimes(4);
+    expect(store.write).not.toHaveBeenCalled();
+    const second = await Promise.all(identities.slice(0, 7).map((item) => getOrAnalyzeVisual(item, store, analyzer, load, prepare)));
+    expect(second.every((item) => item.status === "CACHED")).toBe(true);
+    expect(analyzer.analyze).toHaveBeenCalledTimes(4);
   });
   test("analysis copy is bounded and aspect ratio survives; source bytes stay untouched", async () => {
     const source = new Uint8Array(await sharp({ create: { width: 2000, height: 1000, channels: 3, background: "white" } }).png().toBuffer());

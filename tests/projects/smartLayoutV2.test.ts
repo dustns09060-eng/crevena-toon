@@ -11,7 +11,8 @@ const identity = { userId, projectId, panelId, imageRowId, storagePath: path };
 const state = { panel: {} as ToonPanel, cache: new Map<string, unknown>(), writes: [] as Record<string, unknown>[], failed: false, provider: "external" };
 const analyze = vi.fn(async () => ({ regions: [] }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("../../src/providers/geminiVisualAnalyzer", () => ({
+vi.mock("../../src/providers/geminiVisualAnalyzer", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../src/providers/geminiVisualAnalyzer")>(),
   createGeminiVisualAnalyzer: () => ({ analyze }),
   prepareVisualImage: async (bytes: Uint8Array) => bytes,
 }));
@@ -96,7 +97,8 @@ describe("v2 server preview and apply", () => {
     const { prepareSmartV2PreviewAction } = await import("../../lib/projects/smartLayoutV2");
     state.cache.clear(); analyze.mockRejectedValueOnce(Error("unavailable"));
     const preview = await prepareSmartV2PreviewAction(projectId, false);
-    expect(preview.entries?.[0]).toMatchObject({ analysis: "ANALYSIS_FAILED", result: { status: "REVIEW_REQUIRED", reasonCode: "ANALYSIS_FAILED" } });
+    expect(preview.entries?.[0]).toMatchObject({ analysis: "ANALYSIS_FAILED", failureCode: "IMAGE_DOWNLOAD_FAILED",
+      result: { status: "REVIEW_REQUIRED", reasonCode: "ANALYSIS_FAILED" } });
     expect(state.writes).toHaveLength(0);
   });
   test("stale or failed apply never changes existing image data", async () => {
