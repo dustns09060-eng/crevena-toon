@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ToonPanel } from "../../src/db/types";
-import { visualCachePath, visualImageKey } from "../../lib/projects/visualAnalysisCache";
+import { selectiveReanalysisPaths, visualCachePath, visualImageKey } from "../../lib/projects/visualAnalysisCache";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
@@ -23,10 +23,13 @@ vi.mock("../../lib/projects/service", () => ({
 vi.mock("../../lib/supabase/server", () => ({ createClient: async () => ({
   auth: { getUser: async () => ({ data: { user: { id: userId } } }) },
   storage: { from: () => ({
-    download: async (key: string) => state.cache.has(key)
-      ? { data: new Blob([JSON.stringify(state.cache.get(key))]), error: null }
+    download: async (key: string) => key === path ? { data: new Blob(["image bytes"]), error: null }
+      : state.cache.has(key) ? { data: new Blob([JSON.stringify(state.cache.get(key))]), error: null }
       : { data: null, error: Error("missing") },
-    upload: async (key: string, value: string) => { state.cache.set(key, key.endsWith(".lock") ? value : JSON.parse(value)); return { error: null }; },
+    upload: async (key: string, value: string, options?: { upsert?: boolean }) => {
+      if (options?.upsert === false && state.cache.has(key)) return { error: Error("exists") };
+      state.cache.set(key, key.endsWith(".lock") ? value : JSON.parse(value)); return { error: null };
+    },
     remove: async (keys: string[]) => { keys.forEach((key) => state.cache.delete(key)); return { error: null }; },
   }) },
   from: (table: string) => {
@@ -97,7 +100,7 @@ describe("v2 server preview and apply", () => {
     const { prepareSmartV2PreviewAction } = await import("../../lib/projects/smartLayoutV2");
     state.cache.clear(); analyze.mockRejectedValueOnce(Error("unavailable"));
     const preview = await prepareSmartV2PreviewAction(projectId, false);
-    expect(preview.entries?.[0]).toMatchObject({ analysis: "ANALYSIS_FAILED", failureCode: "IMAGE_DOWNLOAD_FAILED",
+    expect(preview.entries?.[0]).toMatchObject({ analysis: "ANALYSIS_FAILED", failureCode: "UNKNOWN",
       result: { status: "REVIEW_REQUIRED", reasonCode: "ANALYSIS_FAILED" } });
     expect(state.writes).toHaveLength(0);
   });
@@ -110,5 +113,21 @@ describe("v2 server preview and apply", () => {
     expect((await applySmartV2Action(projectId, [target], false)).ok).toBe(false);
     expect(state.panel.raw_image_url).toBe(path);
     expect(state.panel.image_url).toBe("final/unchanged");
+  });
+  test("explicit one-time reanalysis invalidates only the selected cache, leaving other images untouched", async () => {
+    const { reanalyzeVisualAction } = await import("../../lib/projects/smartLayoutV2");
+    const other = { ...identity, panelId: "another-panel", imageRowId: "55555555-5555-4555-8555-555555555555" };
+    state.cache.set(visualCachePath(other), { ...state.cache.get(visualCachePath(identity)) });
+    const before = structuredClone(state.panel);
+    expect((await reanalyzeVisualAction(projectId, panelId, imageRowId, false)).ok).toBe(false);
+    expect(analyze).not.toHaveBeenCalled();
+    const result = await reanalyzeVisualAction(projectId, panelId, imageRowId, true);
+    expect(result.entries?.find((entry) => entry.target.id === panelId)).toMatchObject({ analysis: "ANALYZED" });
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(state.cache.has(visualCachePath(other))).toBe(true);
+    expect(state.cache.has(selectiveReanalysisPaths(identity).marker)).toBe(true);
+    expect(state.panel).toEqual(before);
+    expect((await reanalyzeVisualAction(projectId, panelId, imageRowId, true)).ok).toBe(false);
+    expect(analyze).toHaveBeenCalledTimes(1);
   });
 });

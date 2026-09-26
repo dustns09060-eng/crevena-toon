@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { getOrAnalyzeVisual, validCachedAnalysis, visualCachePath } from "../../lib/projects/visualAnalysisCache";
-import { VisualCacheSchema, VisualRegionsSchema, VISUAL_ANALYSIS_SCHEMA_VERSION } from "../../src/providers/visualAnalysisSchema";
+import { VisualCacheSchema, VisualRegionsSchema, VISUAL_ANALYSIS_SCHEMA_VERSION, normalizeVisualResponse, summarizeVisualRegions } from "../../src/providers/visualAnalysisSchema";
 import { createGeminiVisualAnalyzer, MAX_VISUAL_ATTEMPTS, prepareVisualImage, VisualAnalysisError } from "../../src/providers/geminiVisualAnalyzer";
 import sharp from "sharp";
 
@@ -25,6 +25,31 @@ describe("Visual cache and schema", () => {
       expect(VisualRegionsSchema.safeParse({ regions: [{ ...fixture.regions[0], ...change }] }).success).toBe(false);
     }
     expect(VisualRegionsSchema.safeParse({ regions: Array(81).fill(fixture.regions[0]) }).success).toBe(false);
+  });
+  test("repairs only rounding-sized coordinate and importance overflow before strict cache validation", async () => {
+    const near = { regions: [{ type: "face", x: -0.001, y: 0.82, width: 0.2, height: 0.19, importance: 1.001 }] };
+    expect(normalizeVisualResponse(near)).toEqual({ regions: [{ type: "face", x: 0, y: 0.82, width: 0.2, height: expect.closeTo(0.18), importance: 1 }] });
+    expect(VisualRegionsSchema.safeParse(normalizeVisualResponse(near)).success).toBe(true);
+    expect(normalizeVisualResponse({ regions: [{ type: "face", x: -0.4, y: 0.2, width: 2, height: 0.2, importance: 1 }] })).toBeNull();
+    const generate = vi.fn().mockResolvedValue(JSON.stringify(near));
+    expect((await createGeminiVisualAnalyzer({ generate }).analyze(new Uint8Array([1]), "image/png")).regions).toHaveLength(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  test("drops one malformed low-importance non-face region but rejects a damaged face", () => {
+    const good = { type: "face", x: 0.2, y: 0.2, width: 0.2, height: 0.2, importance: 1 };
+    expect(normalizeVisualResponse({ regions: [good, { type: "important_object", x: -0.4, y: 0.1, width: 0.2, height: 0.2, importance: 0.2 }] })).toEqual({ regions: [good] });
+    expect(normalizeVisualResponse({ regions: [good, { ...good, x: -0.4 }] })).toBeNull();
+    expect(normalizeVisualResponse({ regions: [{ ...good, type: "unknown", importance: 0.9 }] })).toBeNull();
+    expect(normalizeVisualResponse({ regions: [{ ...good, x: "0.2", importance: "1.0", label: "laptop!" }] })).toEqual({ regions: [good] });
+    expect(normalizeVisualResponse({ regions: [{ ...good, x: "NaN" }] })).toBeNull();
+    expect(normalizeVisualResponse({ regions: [], schema_version: 2 })).toBeNull();
+    expect(normalizeVisualResponse({ regions: [] })).toEqual({ regions: [] });
+  });
+  test("short cache debug summary distinguishes a detected laptop from a missing one", () => {
+    const face = VisualRegionsSchema.parse({ regions: fixture.regions }).regions[0];
+    const object = { ...face, type: "important_object" as const, label: "laptop" };
+    expect(summarizeVisualRegions([face, object])).toMatchObject({ counts: { face: 1, important_object: 1 }, importantObjects: ["laptop"] });
+    expect(summarizeVisualRegions([face]).importantObjects).toEqual([]);
   });
   test("cache miss writes once; hit uses no provider calls or image bytes", async () => {
     const { store, analyzer, load, prepare } = setup();
