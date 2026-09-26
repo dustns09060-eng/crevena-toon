@@ -594,6 +594,7 @@ export default function EditorClient({
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{v2Preview.entries.map((entry, index) => <button type="button" className="btn" key={entry.target.id} onClick={() => goToPanel(index)} style={{ maxWidth: "100%", whiteSpace: "normal", textAlign: "left" }}>
             {panels[index].panelType === "cover" ? "Cover" : `Panel ${panels[index].panelNumber - (panels[0].panelType === "cover" ? 1 : 0)}`} — {entry.result.status}<br />
             분석: {entry.analysis} · 배치: {entry.result.source} → {entry.result.status === "PASS" ? "SMART_V2" : "유지"}
+            {entry.failureCode && <><br />분석 실패 · {entry.failureCode === "PROVIDER_503" || entry.failureCode === "PROVIDER_TIMEOUT" ? "일시적 AI 오류" : entry.failureCode === "INVALID_STRUCTURED_RESPONSE" || entry.failureCode === "VALIDATION_FAILED" ? "응답 형식 오류" : entry.failureCode === "IMAGE_DOWNLOAD_FAILED" || entry.failureCode === "IMAGE_PREPROCESS_FAILED" ? "이미지 준비 오류" : "분석 처리 오류"}</>}
             {entry.result.avoided.length > 0 && <><br />회피 영역: {entry.result.avoided.join(", ")}</>}
             {entry.result.reason && <><br />{entry.result.reasonCode ?? entry.result.reason}</>}
           </button>)}</div>
