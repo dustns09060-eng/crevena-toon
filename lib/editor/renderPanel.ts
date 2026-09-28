@@ -35,8 +35,18 @@ export const FONT_FAMILY = "'Noto Sans KR', sans-serif";
 const BACKGROUND_BLUR_RATIO = 0.03;
 /** blur 배경이 foreground보다 튀지 않도록 살짝 어둡게 덮는 정도. 특정 색조가 아닌 순수 검정 반투명이라 화풍(색감) 자체는 바꾸지 않는다. */
 const BACKGROUND_DARKEN_ALPHA = 0.28;
-/** 표지 부제 글자 크기 = 제목 글자 크기 * 이 비율. cover_title_bubble에는 font_size 필드가 하나뿐이라(스키마 변경 없이) 제목 크기에서 파생시킨다. */
+/** Legacy covers without an explicit subtitle size retain their existing size. */
 const COVER_SUBTITLE_FONT_RATIO = 0.42;
+
+export function wrapCoverSubtitle(
+  measure: (text: string, fontSize: number) => number,
+  subtitle: string, width: number, titleFontSize: number, subtitleFontSize: number,
+  hasExplicitSubtitleSize: boolean
+): string[] {
+  // Old covers retain their previous wrap points; new layouts measure the actual subtitle font.
+  const measuredFont = hasExplicitSubtitleSize ? subtitleFontSize : titleFontSize;
+  return wrapText((text) => measure(text, measuredFont), subtitle, width * 0.92);
+}
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -250,10 +260,13 @@ function drawCoverText(
   const titleBlockHeight = titleLines.length * titleLineHeight;
 
   const spacing = subtitle ? titleFontPx * 0.35 : 0;
-  const subtitleLineHeight = subtitleFontPx * 1.25;
-  // Preserve the legacy measurement path; v2 measures the subtitle independently.
-  if (bubble.subtitle_font_size != null) ctx.font = `400 ${subtitleFontPx}px ${FONT_FAMILY}`;
-  const subtitleLines = subtitle ? wrapText((t) => ctx.measureText(t).width, subtitle, px.width * 0.92) : [];
+  const subtitleLineHeight = subtitleFontPx * (bubble.subtitle_line_height ?? 1.25);
+  const subtitleLines = subtitle ? wrapCoverSubtitle((text, fontSize) => {
+    ctx.font = bubble.subtitle_font_size == null
+      ? `700 ${titleFontPx}px ${FONT_FAMILY}`
+      : `400 ${fontSize}px ${FONT_FAMILY}`;
+    return ctx.measureText(text).width;
+  }, subtitle, px.width, titleFontPx, subtitleFontPx, bubble.subtitle_font_size != null) : [];
   const subtitleBlockHeight = subtitleLines.length * subtitleLineHeight;
 
   const totalHeight = titleBlockHeight + spacing + subtitleBlockHeight;
