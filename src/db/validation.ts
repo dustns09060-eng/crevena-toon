@@ -94,6 +94,7 @@ export const ToonCoverTitleBubbleSchema = z
     height: z.number().gt(0).max(1),
     font_size: z.number().min(8).max(96).optional(),
     subtitle_font_size: z.number().min(20).max(96).optional(),
+    subtitle_line_height: z.number().min(1).max(2).optional(),
     layout_source: ToonLayoutSourceSchema.optional(),
     analysis_identity: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   })

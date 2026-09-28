@@ -165,6 +165,8 @@ export interface ToonCoverTitleBubble {
   font_size?: number;
   /** v2 can keep the subtitle readable without changing legacy covers. */
   subtitle_font_size?: number;
+  /** Subtitle line spacing multiplier; omitted legacy covers retain 1.25. */
+  subtitle_line_height?: number;
   layout_source?: ToonLayoutSource;
   analysis_identity?: string;
 }
