@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "../supabase/server";
 import { getProject, getProjectCharacters, getProjectPanels } from "./service";
-import { getDefaultBubbleForIndex, getDefaultCoverTitleBubble, getDefaultNarrationBubble } from "../editor/bubbleLayout";
+import { prepareEditorPanels } from "./editorLoad";
 import { checkEditorReadiness } from "./editorUtils";
 import {
   validateCoverTitleBubble,
@@ -89,39 +89,7 @@ export async function getPanelEditorData(projectId: string): Promise<EditorProje
     return { ok: false, message: "편집기에 진입할 수 없습니다.", readinessErrors: readiness.errors };
   }
 
-  const panelData: EditorPanelData[] = [];
-  for (const panel of panels) {
-    let signedUrl: string | null = null;
-    if (panel.raw_image_url) {
-      const { data: signed } = await supabase.storage.from(PANELS_BUCKET).createSignedUrl(panel.raw_image_url, 3600);
-      signedUrl = signed?.signedUrl ?? null;
-    }
-
-    const dialogue = panel.dialogue.map((item, index) => ({
-      ...item,
-      bubble: item.bubble ?? getDefaultBubbleForIndex(index),
-    }));
-    const narrationBubble = panel.narration ? (panel.narration_bubble ?? getDefaultNarrationBubble()) : null;
-    const coverTitleBubble =
-      panel.panel_type === "cover" && panel.cover_title ? (panel.cover_title_bubble ?? getDefaultCoverTitleBubble()) : null;
-
-    panelData.push({
-      id: panel.id,
-      panelNumber: panel.panel_number,
-      panelType: panel.panel_type,
-      rawImageSignedUrl: signedUrl,
-      hasFinalImage: Boolean(panel.image_url),
-      hasStoredLayout: panel.panel_type === "cover" ? Boolean(panel.cover_title_bubble) : panel.dialogue.some((item) => Boolean(item.bubble)) || Boolean(panel.narration_bubble),
-      updatedAt: panel.updated_at,
-      dialogue,
-      narration: panel.narration,
-      narrationBubble,
-      coverTitle: panel.cover_title,
-      coverSubtitle: panel.cover_subtitle,
-      coverTitleBubble,
-    });
-  }
-
+  const panelData = await prepareEditorPanels(supabase, panels);
   return { ok: true, projectId: project.id, panels: panelData };
 }
 
