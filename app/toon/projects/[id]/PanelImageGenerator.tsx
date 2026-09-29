@@ -156,7 +156,7 @@ export default function PanelImageGenerator({
   }
 
   async function handleEditOne(panelId: string) {
-    const sourceImage = images[panelId]?.candidate;
+    const sourceImage = images[panelId]?.candidate ?? images[panelId]?.approved;
     if (!sourceImage) return;
     setEditingPanel(panelId);
     setEditErrorByPanel((prev) => {
@@ -169,7 +169,7 @@ export default function PanelImageGenerator({
     setEditingPanel(null);
     if (result.ok && result.image) {
       setImages((prev) => ({ ...prev, [panelId]: { ...prev[panelId], candidate: result.image } }));
-      setEditOpenPanel(null);
+      setEditOpenPanel((current) => current === panelId ? null : current);
       setEditInstructionByPanel((prev) => ({ ...prev, [panelId]: "" }));
     } else {
       setEditErrorByPanel((prev) => ({ ...prev, [panelId]: result.message ?? "수정에 실패했습니다." }));
@@ -364,7 +364,7 @@ export default function PanelImageGenerator({
                   >
                     {status === "generating" ? "생성 중..." : "이 컷 다시 만들기"}
                   </button>
-                  {state.candidate && editOpenPanel !== panel.id && (
+                  {(state.candidate || state.approved) && editOpenPanel !== panel.id && (
                     <button
                       type="button"
                       className="btn"
@@ -376,7 +376,7 @@ export default function PanelImageGenerator({
                   )}
                 </div>
 
-                {state.candidate && editOpenPanel === panel.id && (
+                {(state.candidate || state.approved) && editOpenPanel === panel.id && (
                   <div className="field" style={{ marginTop: 8 }}>
                     <label>수정 요청</label>
                     <textarea
