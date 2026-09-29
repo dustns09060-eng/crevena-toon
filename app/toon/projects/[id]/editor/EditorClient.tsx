@@ -527,13 +527,25 @@ export default function EditorClient({
   }
 
   async function handleFinalRender() {
-    if (!canvasRef.current) return;
+      if (!panel?.rawImageSignedUrl) return;
     setRendering(true);
     setMessage(null);
     try {
       // 저장하지 않은 편집 내용도 최종 이미지에는 즉시 반영되도록, 먼저
       // 최신 상태로 캔버스를 다시 그린 뒤 그 결과를 그대로 내보낸다.
-      const blob = await canvasToPngBlob(canvasRef.current);
+        let url = objectUrlCache.current.get(panel.id);
+        if (!url) {
+          url = await fetchAsObjectUrl(panel.rawImageSignedUrl);
+          objectUrlCache.current.set(panel.id, url);
+        }
+        const canvas = document.createElement("canvas");
+        await renderPanelToCanvas(canvas, {
+          imageObjectUrl: url, panelType: panel.panelType, dialogue: panel.dialogue,
+          narration: panel.narration, narrationBubble: panel.narrationBubble,
+          coverTitle: panel.coverTitle, coverSubtitle: panel.coverSubtitle,
+          coverTitleBubble: panel.coverTitleBubble, width: dims.width, height: dims.height,
+        });
+        const blob = await canvasToPngBlob(canvas);
       const file = new File([blob], "final.png", { type: "image/png" });
       const result = await saveFinalRenderAction(panel.id, file);
       if (result.ok) {
