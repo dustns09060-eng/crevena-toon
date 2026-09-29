@@ -41,6 +41,8 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         </div>
       </div>
 
+      <p><Link className="btn btn-primary" href={`/toon/projects/${id}/auto`}>스토리부터 완성본까지 자동 제작</Link></p>
+
       <ProjectStageNav projectId={id} active="storyboard" imagesEnabled={imagesEnabled} />
 
       {project.panel_count === 11 && project.status !== "completed" && (

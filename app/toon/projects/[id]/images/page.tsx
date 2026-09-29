@@ -32,6 +32,8 @@ export default async function ProjectImagesPage({ params }: { params: Promise<{ 
             <h1>{project.title}</h1>
           </div>
         </div>
+        <p><Link className="btn btn-primary" href={`/toon/projects/${id}/auto`}>스토리부터 완성본까지 자동 제작</Link></p>
+
         <ProjectStageNav projectId={id} active="images" imagesEnabled={false} />
         <div className="card">
           <h2 style={{ fontSize: 17, marginTop: 0 }}>스토리보드를 먼저 확정해주세요</h2>
@@ -66,6 +68,8 @@ export default async function ProjectImagesPage({ params }: { params: Promise<{ 
           <h1>{project.title}</h1>
         </div>
       </div>
+
+      <p><Link className="btn btn-primary" href={`/toon/projects/${id}/auto`}>스토리부터 완성본까지 자동 제작</Link></p>
 
       <ProjectStageNav projectId={id} active="images" imagesEnabled />
 

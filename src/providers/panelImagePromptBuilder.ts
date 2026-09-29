@@ -91,13 +91,15 @@ function buildCharacterBlock(index: number, ctx: PanelCharacterContext): string 
  */
 const CHARACTER_IDENTITY_PRIORITY_CLAUSE = [
   "CHARACTER IDENTITY / REFERENCE — HIGHEST PRIORITY:",
+  "Keep the reference outfit, exact garment colors, star/moon emblems and accessories identical in every panel. Do not invent wardrobe changes. Preserve eye-to-face ratio and head-to-body ratio, even in emotional close-ups.",
+  "Books, worksheets, signs and boards must contain only blank areas or simple non-text diagrams. No pseudo-writing, illegible glyphs, letters or numbers. Render a single full-bleed scene without borders, letterboxing or blurred padding. Leave uncluttered space above speakers for dialogue added later.",
   "The approved Character Sheet reference image for each character is the single authoritative source of that " +
     "character's visual identity for this panel.",
   "Preserve, for every character, exactly the same face shape, eyes, hairstyle, hair color, age appearance, " +
     "body proportions, and distinctive features shown in their reference image.",
   "The scene composition must adapt around each character's fixed identity — never redesign or reinterpret a " +
     "character's face, age, or body to better fit the scene, camera angle, or mood.",
-  "Different pose, expression, hand gesture, outfit, props, background, and camera angle are allowed and " +
+  "Different pose, expression, hand gesture, props, background, and camera angle are allowed and " +
     "expected to vary per scene — but the character's core identity above must remain unchanged.",
 ].join("\n");
 

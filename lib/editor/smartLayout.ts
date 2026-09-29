@@ -68,18 +68,18 @@ function place(size: { width: number; height: number }, candidates: readonly { x
   return null;
 }
 
-export function smartLayoutPanel(original: SmartPanel, overwrite = false): SmartResult {
+export function smartLayoutPanel(original: SmartPanel, overwrite = false, mobile = false): SmartResult {
   if (original.hasStoredLayout && !overwrite) return { status: "SKIPPED_MANUAL", panel: original, reason: "기존 배치 있음" };
   const panel: SmartPanel = { ...original, dialogue: original.dialogue.map((d) => ({ ...d })) };
   if (panel.panelType === "cover") {
     if (!panel.coverTitle) return { status: "REVIEW_REQUIRED", panel: original, reason: "표지 제목 없음" };
-    const font = panel.coverTitle.length > 32 ? 32 : panel.coverTitle.length > 20 ? 36 : 40;
-    const width = 0.44;
+    const font = mobile ? 56 : panel.coverTitle.length > 32 ? 32 : panel.coverTitle.length > 20 ? 36 : 40;
+    const width = mobile ? 0.84 : 0.44;
     const titleLines = wrapText((t) => measure(t, font), panel.coverTitle, width * dims.width * 0.92).length;
     const subLines = panel.coverSubtitle ? wrapText((t) => measure(t, font * 0.42), panel.coverSubtitle, width * dims.width * 0.92).length : 0;
     const height = Math.max(0.12, (titleLines * font * 1.25 + subLines * font * 0.42 * 1.25 + (subLines ? font * 0.35 : 0)) / dims.height + 0.035);
     if (height > 0.31) return { status: "REVIEW_REQUIRED", panel: original, reason: "표지 제목이 너무 깁니다" };
-    panel.coverTitleBubble = clampBubbleRect({ x: 0.06, y: 0.045, width, height, font_size: font, layout_source: "SMART_V1" as const });
+    panel.coverTitleBubble = clampBubbleRect({ x: mobile ? 0.08 : 0.06, y: 0.045, width, height, font_size: font, layout_source: "SMART_V1" as const });
     return { status: "PASS", panel };
   }
 
@@ -88,8 +88,9 @@ export function smartLayoutPanel(original: SmartPanel, overwrite = false): Smart
   const occupied: Rect[] = [];
   if (panel.narration) {
     let placed: ReturnType<typeof place> = null;
-    for (const font of [26, 23, 21]) {
+    for (const font of (mobile ? [34, 32] : [26, 23, 21])) {
       const size = fitNarration(panel.narration, font);
+      if (mobile) size.height *= 1.5;
       if (!size.fits) continue;
       placed = place(size, [
         { x: 0.5, y: 0.9 - size.height, side: "center" },
@@ -97,7 +98,7 @@ export function smartLayoutPanel(original: SmartPanel, overwrite = false): Smart
         { x: 0.95, y: 0.9 - size.height, side: "right" },
         { x: 0.5, y: 0.05, side: "center" },
       ], occupied);
-      if (placed) { panel.narrationBubble = { ...clampBubbleRect(placed.rect), font_size: font, preset: panel.narrationBubble?.preset ?? "dark", opacity: panel.narrationBubble?.opacity ?? 0.72, layout_source: "SMART_V1" }; break; }
+      if (placed) { panel.narrationBubble = { ...clampBubbleRect(placed.rect), font_size: font, preset: panel.narrationBubble?.preset ?? (mobile ? "cream" : "dark"), opacity: panel.narrationBubble?.opacity ?? 0.72, layout_source: "SMART_V1" }; break; }
     }
     if (!placed) return { status: "REVIEW_REQUIRED", panel: original, reason: "내레이션을 배치할 공간이 없습니다" };
     occupied.push(placed.rect);
@@ -106,8 +107,11 @@ export function smartLayoutPanel(original: SmartPanel, overwrite = false): Smart
     const item = panel.dialogue[i];
     let placed: ReturnType<typeof place> = null;
     let chosenFont = 28;
-    for (const font of [item.text.length < 18 ? 30 : 28, SMART_MIN_DIALOGUE_FONT_SIZE]) {
+    for (const font of (mobile ? [38, 34] : [item.text.length < 18 ? 30 : 28, SMART_MIN_DIALOGUE_FONT_SIZE])) {
       const size = fitDialogue(item.text, font, 0.43);
+      // Square source art has less height than the 4:5 layout reference.
+      // Reserve room for larger type and vertical padding without shrinking it back.
+      if (mobile) size.height *= 1.5;
       const lineCount = wrapText((t) => measure(t, font), item.text, size.width * dims.width * 0.8).length;
       if (lineCount * font * 1.3 > size.height * dims.height) continue;
       placed = place(size, SMART_LAYOUT_SLOTS, occupied);
