@@ -8,6 +8,7 @@ import { completeProjectAction, reopenProjectAction } from "../../../../../lib/p
 import { generateCaptionAction, saveCaptionAction, type CaptionView } from "../../../../../lib/projects/captions";
 import { downloadAllFinalImagesAsZip, downloadSingleFinalImage } from "../../../../../lib/download/browserDownload";
 import { buildPanelFileName } from "../../../../../lib/download/fileNaming";
+import { createPublicationCopyAction } from "../../../../../lib/projects/publicationCopy";
 
 export default function FinalClient({
   projectId,
@@ -34,6 +35,19 @@ export default function FinalClient({
   const [completing, setCompleting] = useState(false);
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [copyTitle, setCopyTitle] = useState(`${projectTitle} · 연재 최종본`);
+  const [selectedNumbers, setSelectedNumbers] = useState(panels.map((p) => p.panelNumber));
+  const [copying, setCopying] = useState(false);
+
+  async function handlePublicationCopy() {
+    setCopying(true);
+    setMessage(null);
+    try {
+      const result = await createPublicationCopyAction(projectId, selectedNumbers, copyTitle);
+      if (result.ok) router.push(`/toon/projects/${result.projectId}/final`);
+      else setMessage(result.message);
+    } finally { setCopying(false); }
+  }
 
   const isCompleted = status === "completed";
 
@@ -163,6 +177,19 @@ export default function FinalClient({
       )}
 
       {message && <p className="hint">{message}</p>}
+
+      <details className="card" style={{ marginBottom: 20 }}>
+        <summary>연재용 편집본 만들기</summary>
+        <p className="hint">선택한 컷을 원래 순서대로 새 프로젝트에 복사합니다. 원본은 그대로 보관됩니다.</p>
+        <label>편집본 제목<input aria-label="편집본 제목" className="input" value={copyTitle} onChange={(e) => setCopyTitle(e.target.value)} maxLength={100} disabled={copying} /></label>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", margin: "16px 0" }}>
+          {panels.map((p) => <label key={p.panelNumber} style={{ display: "flex", gap: 6 }}>
+            <input type="checkbox" disabled={copying} checked={selectedNumbers.includes(p.panelNumber)} onChange={(e) => setSelectedNumbers((prev) => e.target.checked ? [...prev, p.panelNumber] : prev.filter((n) => n !== p.panelNumber))} />
+            {p.panelType === "cover" ? "표지 포함" : `${p.panelNumber - (panels[0]?.panelType === "cover" ? 1 : 0)}컷 포함`}
+          </label>)}
+        </div>
+        <button type="button" className="btn btn-primary" disabled={copying || selectedNumbers.length < 2} onClick={handlePublicationCopy}>{copying ? "편집본 복사 중..." : `선택한 ${selectedNumbers.length}장으로 편집본 만들기`}</button>
+      </details>
 
       <div className="final-grid">
         {panels.map((panel, index) => (

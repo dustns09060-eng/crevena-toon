@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "../../../../../lib/supabase/server";
 import { getFinalPageData } from "../../../../../lib/projects/finalPage";
 import FinalClient from "./FinalClient";
+export const maxDuration = 300;
 
 export default async function FinalPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
