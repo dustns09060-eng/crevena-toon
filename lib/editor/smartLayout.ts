@@ -90,6 +90,7 @@ export function smartLayoutPanel(original: SmartPanel, overwrite = false, mobile
     let placed: ReturnType<typeof place> = null;
     for (const font of (mobile ? [34, 32] : [26, 23, 21])) {
       const size = fitNarration(panel.narration, font);
+      if (mobile) size.height *= 1.5;
       if (!size.fits) continue;
       placed = place(size, [
         { x: 0.5, y: 0.9 - size.height, side: "center" },
@@ -108,6 +109,9 @@ export function smartLayoutPanel(original: SmartPanel, overwrite = false, mobile
     let chosenFont = 28;
     for (const font of (mobile ? [38, 34] : [item.text.length < 18 ? 30 : 28, SMART_MIN_DIALOGUE_FONT_SIZE])) {
       const size = fitDialogue(item.text, font, 0.43);
+      // Square source art has less height than the 4:5 layout reference.
+      // Reserve room for larger type and vertical padding without shrinking it back.
+      if (mobile) size.height *= 1.5;
       const lineCount = wrapText((t) => measure(t, font), item.text, size.width * dims.width * 0.8).length;
       if (lineCount * font * 1.3 > size.height * dims.height) continue;
       placed = place(size, SMART_LAYOUT_SLOTS, occupied);
