@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from 'react';
+import { smartLayoutPanel } from '../../../../../lib/editor/smartLayout';
+import QualityRefresh from './QualityRefresh';
 import Link from 'next/link';
 import { advanceAutoProduction, getAutoProductionState, getAutoRenderInput } from '../../../../../lib/projects/autoProduction';
 import { saveBubbleLayoutAction, saveCoverLayoutAction, saveFinalRenderAction } from '../../../../../lib/projects/editor';
@@ -33,7 +35,10 @@ export default function AutoProductionClient({ projectId, initial }: { projectId
           const step = current.step;
           if (step.kind === 'done') { setMessage('완성본이 저장되었습니다.'); break; }
           if (step.kind === 'render') {
-            const { panel, dimensions } = await getAutoRenderInput(projectId, step.panelId);
+            const { panel: sourcePanel, dimensions } = await getAutoRenderInput(projectId, step.panelId);
+            const layout = smartLayoutPanel(sourcePanel, false, true);
+            if (layout.status === "REVIEW_REQUIRED") throw new Error(layout.reason);
+            const panel = { ...sourcePanel, ...layout.panel };
             await document.fonts.load(`16px ${FONT_FAMILY}`); await document.fonts.ready;
             const url = await fetchAsObjectUrl(panel.rawImageSignedUrl!);
             try {
@@ -68,6 +73,7 @@ export default function AutoProductionClient({ projectId, initial }: { projectId
       {running && <button className="btn" type="button" onClick={() => { stop.current = true; setMessage('현재 요청을 저장한 뒤 멈춥니다.'); }}>현재 단계 후 멈추기</button>}</>}
     {message && <p role="status">{message}</p>}
     {!running && <p><Link href={`/toon/projects/${projectId}`}>스토리보드로 돌아가기</Link> · <Link href={`/toon/projects/${projectId}/images`}>이미지 확인</Link>{finished && <> · <Link href={`/toon/projects/${projectId}/final`}>완성본 보기 / 다운로드</Link></>}</p>}
+    <QualityRefresh projectId={projectId} disabled={running} onRunningChange={setRunning} />
     <p>자동 배치된 말풍선과 이미지 품질은 게시 전에 확인해주세요. 필요하면 기존 편집기에서 수정할 수 있습니다.</p>
   </section>;
 }

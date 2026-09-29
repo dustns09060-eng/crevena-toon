@@ -77,3 +77,19 @@ describe("Smart Layout v1", () => {
     expect(validateCoverTitleBubble(results[0].panel.coverTitleBubble).valid).toBe(true);
   });
 });
+
+
+test("mobile layouts enlarge dialogue, enable speech tails and preserve manual layouts unless requested", () => {
+  const original = scene([dialogue("여보, 애들 가방 여기 있어. 오늘 잘 부탁해!", 0), dialogue("응, 걱정 마! 애들이랑 잘 다녀올게.", 1)], "학생으로 보낸 하루가 끝나면, 엄마의 두 번째 수업이 시작됩니다.", true);
+  expect(smartLayoutPanel(original, false, true).status).toBe("SKIPPED_MANUAL");
+  const result = smartLayoutPanel(original, true, true);
+  expect(result.status).toBe("PASS");
+  expect(validateToonDialogue(result.panel.dialogue).valid).toBe(true);
+  expect(validateNarrationBubble(result.panel.narrationBubble).valid).toBe(true);
+  for (const item of result.panel.dialogue) {
+    expect(item.bubble!.font_size).toBeGreaterThanOrEqual(34);
+    expect(item.bubble!.tail_enabled).toBe(true);
+    expect(intersection(item.bubble!, result.panel.narrationBubble!)).toBe(false);
+  }
+  expect(original.dialogue[0].bubble!.font_size).toBe(28);
+});

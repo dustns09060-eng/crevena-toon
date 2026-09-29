@@ -2,7 +2,7 @@
 
 import type { ToonCoverTitleBubble, ToonDialogueItem, ToonNarrationBubble, ToonPanelType } from "../../src/db/types";
 import { DIALOGUE_TEXT_PADDING_RATIO, computeBubbleTailTriangle, shouldRenderBubbleTail, wrapText } from "./bubbleLayout";
-import { type ContainRect, computeContainRect, computeCoverRect, normalizedRectToCanvasPx, scaleFontSizeToForeground } from "./containFit";
+import { type ContainRect, computeContainRect, normalizedRectToCanvasPx, scaleFontSizeToForeground } from "./containFit";
 
 /**
  * STEP 7 §8, STEP 7 §21 — 미리보기와 최종 이미지가 반드시 같은 결과를
@@ -14,7 +14,7 @@ import { type ContainRect, computeContainRect, computeCoverRect, normalizedRectT
  *
  * approved 원본 이미지는 실제 생성 비율(예: 864x1184)이 canvas 비율과
  * 다를 수 있으므로, stretch/crop 없이 CONTAIN 방식으로 배치하고 남는
- * 여백은 같은 이미지를 흐리게 확대한 배경으로 채운다.
+ * 여백은 밝은 종이색으로 채워 원본 전체를 보존한다.
  */
 
 export interface RenderPanelInput {
@@ -31,10 +31,6 @@ export interface RenderPanelInput {
 }
 
 export const FONT_FAMILY = "'Noto Sans KR', sans-serif";
-/** 배경 blur 강도 — canvas 폭에 비례시켜 해상도가 달라져도 시각적으로 같은 강도를 유지한다. */
-const BACKGROUND_BLUR_RATIO = 0.03;
-/** blur 배경이 foreground보다 튀지 않도록 살짝 어둡게 덮는 정도. 특정 색조가 아닌 순수 검정 반투명이라 화풍(색감) 자체는 바꾸지 않는다. */
-const BACKGROUND_DARKEN_ALPHA = 0.28;
 /** Legacy covers without an explicit subtitle size retain their existing size. */
 const COVER_SUBTITLE_FONT_RATIO = 0.42;
 
@@ -95,7 +91,13 @@ function drawWrappedText(
 
   const paddingX = box.width * paddingRatio;
   const maxWidth = box.width - paddingX * 2;
-  const lines = wrapText((t) => ctx.measureText(t).width, text, maxWidth);
+  let lines = wrapText((t) => ctx.measureText(t).width, text, maxWidth);
+  // Saved boxes and differently shaped originals must never let text overflow.
+  while (lines.length * fontSizePx * 1.3 > box.height * 0.88 && fontSizePx > 12) {
+    fontSizePx -= 1;
+    ctx.font = `${fontSizePx}px ${FONT_FAMILY}`;
+    lines = wrapText((t) => ctx.measureText(t).width, text, maxWidth);
+  }
 
   const lineHeight = fontSizePx * 1.3;
   const totalHeight = lines.length * lineHeight;
@@ -107,24 +109,6 @@ function drawWrappedText(
   });
 
   return { lineCount: lines.length, lineHeight };
-}
-
-/**
- * 배경 레이어: 같은 원본 이미지를 canvas 전체를 채우도록(COVER) 확대해
- * 강하게 흐리고 살짝 어둡게 덮는다. foreground(선명한 CONTAIN 이미지)의
- * 시각적 보조 역할만 하도록, foreground보다 절대 선명하지 않게 한다.
- */
-function drawBlurredBackground(ctx: CanvasRenderingContext2D, img: HTMLImageElement, canvasWidth: number, canvasHeight: number) {
-  const cover = computeCoverRect(canvasWidth, canvasHeight, img.naturalWidth, img.naturalHeight);
-  const blurPx = Math.max(16, Math.round(canvasWidth * BACKGROUND_BLUR_RATIO));
-
-  ctx.save();
-  ctx.filter = `blur(${blurPx}px)`;
-  ctx.drawImage(img, cover.offsetX, cover.offsetY, cover.drawWidth, cover.drawHeight);
-  ctx.filter = "none";
-  ctx.fillStyle = `rgba(0, 0, 0, ${BACKGROUND_DARKEN_ALPHA})`;
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-  ctx.restore();
 }
 
 function drawBubbleTail(
@@ -313,8 +297,9 @@ export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: Rend
 
   const foreground = computeContainRect(input.width, input.height, img.naturalWidth, img.naturalHeight);
 
-  // 1) 여백을 채우는 흐린 배경 (COVER, blur) — foreground보다 항상 덜 선명해야 한다.
-  drawBlurredBackground(ctx, img, input.width, input.height);
+  // Clean paper margins preserve the full artwork without blurred duplicate bands.
+  ctx.fillStyle = "#fffaf2";
+  ctx.fillRect(0, 0, input.width, input.height);
 
   // 2) 원본 이미지 본체 (CONTAIN, stretch/crop 없음, 선명)
   ctx.drawImage(img, foreground.offsetX, foreground.offsetY, foreground.drawWidth, foreground.drawHeight);
