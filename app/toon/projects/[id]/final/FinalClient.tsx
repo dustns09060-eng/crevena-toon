@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
 import type { FinalPanelView } from "../../../../../lib/projects/finalPage";
-import { completeProjectAction, reopenProjectAction } from "../../../../../lib/projects/finalPage";
+import { completeProjectAction, reopenProjectAction, renameProjectAction } from "../../../../../lib/projects/finalPage";
 import { generateCaptionAction, saveCaptionAction, type CaptionView } from "../../../../../lib/projects/captions";
 import { downloadAllFinalImagesAsZip, downloadSingleFinalImage } from "../../../../../lib/download/browserDownload";
 import { buildPanelFileName } from "../../../../../lib/download/fileNaming";
@@ -38,6 +38,8 @@ export default function FinalClient({
   const [copyTitle, setCopyTitle] = useState(`${projectTitle} · 연재 최종본`);
   const [selectedNumbers, setSelectedNumbers] = useState(panels.map((p) => p.panelNumber));
   const [copying, setCopying] = useState(false);
+  const [projectName, setProjectName] = useState(projectTitle);
+  const [renaming, setRenaming] = useState(false);
 
   async function handlePublicationCopy() {
     setCopying(true);
@@ -177,6 +179,19 @@ export default function FinalClient({
       )}
 
       {message && <p className="hint">{message}</p>}
+
+      <details className="card" style={{ marginBottom: 12 }}>
+        <summary>프로젝트 제목 수정</summary>
+        <input aria-label="프로젝트 제목" className="input" value={projectName} maxLength={100} disabled={renaming} onChange={(e) => setProjectName(e.target.value)} />
+        <button type="button" className="btn" disabled={renaming} onClick={async () => {
+          setRenaming(true);
+          try {
+            const result = await renameProjectAction(projectId, projectName);
+            setMessage(result.ok ? "제목을 저장했습니다." : result.message ?? "제목 저장에 실패했습니다.");
+            if (result.ok) router.refresh();
+          } finally { setRenaming(false); }
+        }}>{renaming ? "제목 저장 중..." : "제목 저장"}</button>
+      </details>
 
       <details className="card" style={{ marginBottom: 20 }}>
         <summary>연재용 편집본 만들기</summary>

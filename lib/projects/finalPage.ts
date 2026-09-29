@@ -88,6 +88,17 @@ export interface CompleteProjectState {
   message?: string;
 }
 
+export async function renameProjectAction(projectId: string, title: string): Promise<CompleteProjectState> {
+  const owned = await requireOwnedProject(projectId);
+  if ("error" in owned) return { ok: false, message: owned.error };
+  if (!title.trim() || title.trim().length > 100) return { ok: false, message: "제목은 1~100자로 입력해주세요." };
+  const { error } = await owned.supabase.from("toon_projects").update({ title: title.trim() }).eq("id", owned.project.id);
+  if (error) return { ok: false, message: "제목을 저장하지 못했습니다." };
+  revalidatePath("/toon/projects");
+  revalidatePath(`/toon/projects/${projectId}/final`);
+  return { ok: true };
+}
+
 /**
  * STEP 8 §1, §14 — 서버 측에서 다시 한번 완료 조건을 검증한 뒤에만
  * status를 completed로 바꾼다. 이미 completed인 경우는 아무 것도
