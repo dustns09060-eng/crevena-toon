@@ -32,7 +32,9 @@ export default async function ProjectImagesPage({ params }: { params: Promise<{ 
             <h1>{project.title}</h1>
           </div>
         </div>
-        <ProjectStageNav projectId={id} active="images" imagesEnabled={false} />
+        <p><Link className="btn btn-primary" href={`/toon/projects/${id}/auto`}>스토리부터 완성본까지 자동 제작</Link></p>
+
+      <ProjectStageNav projectId={id} active="images" imagesEnabled={false} />
         <div className="card">
           <h2 style={{ fontSize: 17, marginTop: 0 }}>스토리보드를 먼저 확정해주세요</h2>
           <p className="hint">장면과 대사를 확정한 뒤 이미지 컷을 만들 수 있어요.</p>
