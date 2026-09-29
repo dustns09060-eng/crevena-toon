@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "../../../../../lib/supabase/server";
 import { getProject, getProjectCharacters, getProjectPanels } from "../../../../../lib/projects/service";
 import { checkEditorReadiness } from "../../../../../lib/projects/editorUtils";
-import { getPanelEditorData } from "../../../../../lib/projects/editor";
+import { prepareEditorPanels } from "../../../../../lib/projects/editorLoad";
 import EditorClient from "./EditorClient";
 
 /**
@@ -42,21 +42,19 @@ export default async function PanelEditorPage({
     redirect(`/toon/projects/${id}`);
   }
 
-  const editorData = await getPanelEditorData(id);
-  if (!editorData.ok) {
-    redirect(`/toon/projects/${id}`);
-  }
-
-  const characters = await getProjectCharacters(supabase, id);
-  const { data: externalImages, error: externalError } = await supabase.from("toon_panel_images")
-    .select("panel_id, storage_path").in("panel_id", panels.map((p) => p.id))
-    .eq("provider", "external").eq("model", "upload").eq("status", "approved");
+  const [editorPanels, characters, { data: externalImages, error: externalError }] = await Promise.all([
+    prepareEditorPanels(supabase, panels),
+    getProjectCharacters(supabase, id),
+    supabase.from("toon_panel_images")
+      .select("panel_id, storage_path").in("panel_id", panels.map((p) => p.id))
+      .eq("provider", "external").eq("model", "upload").eq("status", "approved"),
+  ]);
   const externalProject = !externalError && panels.every((p) => Boolean(p.raw_image_url)
     && externalImages?.some((row) => row.panel_id === p.id && row.storage_path === p.raw_image_url));
 
   const requestedPanelNumber = panelParam ? Number(panelParam) : null;
   const initialPanelIndex = requestedPanelNumber
-    ? Math.max(0, editorData.panels.findIndex((p) => p.panelNumber === requestedPanelNumber))
+    ? Math.max(0, editorPanels.findIndex((p) => p.panelNumber === requestedPanelNumber))
     : 0;
 
   return (
@@ -64,7 +62,7 @@ export default async function PanelEditorPage({
       <div className="topbar">
         <h1>{project.title} — 말풍선 편집</h1>
       </div>
-      <EditorClient projectId={id} initialPanels={editorData.panels} characters={characters} initialPanelIndex={initialPanelIndex} externalProject={externalProject} />
+      <EditorClient projectId={id} initialPanels={editorPanels} characters={characters} initialPanelIndex={initialPanelIndex} externalProject={externalProject} />
     </main>
   );
 }
