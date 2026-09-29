@@ -65,6 +65,10 @@ function createSupabaseMock(config: MockConfig = {}) {
             record(`storage.${bucket}.createSignedUrl`, signPath);
             return { data: { signedUrl: "https://signed.example/" + signPath }, error: null };
           },
+          createSignedUrls: async (paths: string[]) => {
+            record(`storage.${bucket}.createSignedUrls`, paths);
+            return { data: paths.map((signPath) => ({ path: signPath, signedUrl: "https://signed.example/" + signPath })), error: null };
+          },
         };
       },
     },
@@ -155,6 +159,19 @@ describe("checkEditorReadiness", () => {
 });
 
 describe("getPanelEditorData", () => {
+  test.each([11, 20])("%i컷 원본 서명은 중복 경로를 포함해 한 요청으로 처리한다", async (count) => {
+    getProjectMock.mockResolvedValue({ ...OWNED_PROJECT, panel_count: count });
+    getProjectPanelsMock.mockResolvedValue(Array.from({ length: count }, (_, index) => ({
+      ...APPROVED_PANEL, id: `panel-${index + 1}`, panel_number: index + 1,
+      raw_image_url: `user-a/proj-1/raw/${index + 1}/gen-1.png`,
+    })));
+    const { getPanelEditorData } = await import("../../lib/projects/editor");
+    const result = await getPanelEditorData("proj-1");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.panels.map((panel) => panel.rawImageSignedUrl)).toHaveLength(count);
+    expect(currentSupabase._calls["storage.toon-panels.createSignedUrls"]).toHaveLength(1);
+    expect(currentSupabase._calls["storage.toon-panels.createSignedUrl"]).toBeUndefined();
+  });
   test("타인/존재하지 않는 프로젝트는 거부된다", async () => {
     getProjectMock.mockResolvedValue(null);
     const { getPanelEditorData } = await import("../../lib/projects/editor");
