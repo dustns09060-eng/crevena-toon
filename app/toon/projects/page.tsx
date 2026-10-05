@@ -33,6 +33,12 @@ export default async function ProjectsPage() {
         </Link>
       </div>
 
+      <section className="studio-start-grid" aria-label="작업 시작">
+        <Link className="card studio-start" href="/toon/projects/new"><strong>새 에피소드</strong><span>AI 제작 또는 내 이미지 가져오기</span></Link>
+        <Link className="card studio-start" href="/toon/characters/new"><strong>캐릭터 만들기</strong><span>사진이나 원하는 외모로 시작</span></Link>
+        <Link className="card studio-start" href="/toon/series"><strong>내 시리즈</strong><span>같은 캐릭터로 다음 화 이어가기</span></Link>
+      </section>
+      <h2>이어 만들기 · 내 작품 {projects.length}개</h2>
       {projects.length === 0 ? (
         <div className="empty-state">
           <p>{"아직 만든 프로젝트가 없어요.\n소재를 정하고 스토리보드를 만들어보세요."}</p>

@@ -20,6 +20,7 @@ import { type ContainRect, computeContainRect, computeCoverRect, normalizedRectT
 
 export interface RenderPanelInput {
   hideText?: boolean;
+  validateText?: boolean;
   characterNames?: Record<string, string>;
   imageObjectUrl: string;
   panelType: ToonPanelType;
@@ -109,7 +110,7 @@ function drawWrappedText(
     ctx.fillText(line, centerX, startY + i * lineHeight);
   });
 
-  return { lineCount: lines.length, lineHeight };
+  return { lineCount: lines.length, lineHeight, overflow: totalHeight > box.height || lines.some(line=>ctx.measureText(line).width>maxWidth) };
 }
 
 /**
@@ -209,8 +210,9 @@ function drawBubble(
   ctx.save();
   ctx.fillStyle = "#111111";
   if (style === "text_only") { ctx.shadowColor = "#ffffff"; ctx.shadowBlur = 9; }
-  drawWrappedText(ctx, item.text, px, fontSizePx);
+  const fit=drawWrappedText(ctx, item.text, px, fontSizePx);
   ctx.restore();
+  return fit;
 }
 
 function drawNarration(ctx: CanvasRenderingContext2D, text: string, bubble: ToonNarrationBubble, foreground: ContainRect) {
@@ -228,8 +230,9 @@ function drawNarration(ctx: CanvasRenderingContext2D, text: string, bubble: Toon
 
   ctx.save();
   ctx.fillStyle = palette.fg;
-  drawWrappedText(ctx, text, px, fontSizePx, 0.06);
+  const fit=drawWrappedText(ctx, text, px, fontSizePx, 0.06);
   ctx.restore();
+  return fit;
 }
 
 /**
@@ -291,9 +294,10 @@ function drawCoverText(
     });
   }
   ctx.restore();
+  return { overflow: totalHeight > px.height };
 }
 
-export type RenderedForeground = ContainRect;
+export type RenderedForeground = ContainRect & { warnings?: string[] };
 
 export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: RenderPanelInput): Promise<RenderedForeground> {
   canvas.width = input.width;
@@ -332,17 +336,18 @@ export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: Rend
   // 2) 원본 이미지 본체 (CONTAIN, stretch/crop 없음, 선명)
   ctx.drawImage(img, foreground.offsetX, foreground.offsetY, foreground.drawWidth, foreground.drawHeight);
 
+  const warnings:string[]=[];
   // 3) 대사/내레이션은 항상 foreground 좌표계 기준.
   for (const item of input.hideText || composition === "caption" ? [] : input.dialogue) {
-    drawBubble(ctx, item, foreground, input.width, input.height);
+    if(drawBubble(ctx, item, foreground, input.width, input.height)?.overflow) warnings.push("말풍선 글자가 상자 밖으로 나갑니다. 크기를 늘리거나 대사를 줄여주세요.");
   }
   if (!input.hideText && composition === "overlay" && input.narration && input.narrationBubble) {
-    drawNarration(ctx, input.narration, input.narrationBubble, foreground);
+    if(drawNarration(ctx, input.narration, input.narrationBubble, foreground).overflow)warnings.push("내레이션 글자가 상자 밖으로 나갑니다. 높이를 늘려주세요.");
   }
 
   // 4) 표지 텍스트는 panel_type === 'cover'일 때만, scene 컷에는 절대 그리지 않는다.
   if (!input.hideText && input.panelType === "cover" && input.coverTitle && input.coverTitleBubble) {
-    drawCoverText(ctx, input.coverTitle, input.coverSubtitle, input.coverTitleBubble, foreground);
+    if(drawCoverText(ctx, input.coverTitle, input.coverSubtitle, input.coverTitleBubble, foreground).overflow)warnings.push("표지 제목·부제가 글 영역을 넘습니다. 높이를 늘리거나 글자 크기를 조절해주세요.");
   }
 
   if (!input.hideText && captions.blocks.length) {
@@ -358,7 +363,8 @@ export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: Rend
     }
     ctx.restore();
   }
-  return foreground;
+  if(input.validateText && warnings.length)throw new Error(warnings.join(" "));
+  return {...foreground,warnings:[...new Set(warnings)]};
 }
 
 export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { editablePanel, changedPanels, parseDraft, restoreDraft, resizeRect, type EditorDraft } from "../../../../../lib/editor/draft";
 import type { EditorPanelData } from "../../../../../lib/projects/editor";
 import { getPanelEditorData, saveBubbleLayoutAction, saveCoverLayoutAction, saveFinalRenderAction } from "../../../../../lib/projects/editor";
 import DialogueImportPanel from "./DialogueImportPanel";
@@ -76,6 +77,14 @@ export default function EditorClient({
   initialPanelIndex?: number;
   externalProject?: boolean;
 }) {
+  const savedPanels = useRef(initialPanels);
+  const [draftReady, setDraftReady] = useState(false);
+  const [recovery, setRecovery] = useState<EditorDraft | null>(null);
+  const [draftNotice, setDraftNotice] = useState("");
+  const [showGuides, setShowGuides] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const history = useRef<{past:EditorPanelData[][];future:EditorPanelData[][];last:number}>({past:[],future:[],last:0});
   const [panels, setPanels] = useState<EditorPanelData[]>(initialPanels);
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [currentIndex, setCurrentIndex] = useState(
@@ -101,11 +110,15 @@ export default function EditorClient({
   const [v2Progress, setV2Progress] = useState<string | null>(null);
   const [cacheSummary, setCacheSummary] = useState<{ cached: number; needed: number } | null>(null);
 
+  const backupInput = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const objectUrlCache = useRef<Map<string, string>>(new Map());
   const dragState = useRef<{
     target: Selection;
+    resize: boolean;
+    startWidth: number;
+    startHeight: number;
     startClientX: number;
     startClientY: number;
     startX: number;
@@ -117,7 +130,54 @@ export default function EditorClient({
     : smartPreview?.results[currentIndex]?.status === "PASS" ? { ...panels[currentIndex], ...smartPreview.results[currentIndex].panel } : panels[currentIndex];
   const dims = useMemo(() => getFinalImageDimensions(), []);
 
+  const draftKey = `crevena:editor:v1:${projectId}`;
+  useEffect(() => {
+    try { setRecovery(parseDraft(sessionStorage.getItem(draftKey),projectId)); }
+    catch { setDraftNotice("브라우저 임시 보관을 사용할 수 없습니다. 자주 저장해주세요."); }
+    setDraftReady(true);
+  }, [draftKey,projectId]);
+  useEffect(() => {
+    if (!draftReady || recovery) return;
+    try {
+      const edited=panels.filter(p=>dirty[p.id]).map(editablePanel);
+      if (edited.length) { sessionStorage.setItem(draftKey,JSON.stringify({version:1,projectId,savedAt:Date.now(),panels:edited}));setDraftNotice("이 탭에 임시 보관됨 · 서버 저장은 저장 버튼을 눌러주세요."); }
+      else {sessionStorage.removeItem(draftKey);setDraftNotice("");}
+    } catch {setDraftNotice("임시 보관 실패 · 변경사항을 서버에 저장해주세요.");}
+  }, [panels,dirty,draftReady,recovery,draftKey,projectId]);
+  useEffect(() => {
+    const warn=(event:BeforeUnloadEvent)=>{if(Object.values(dirty).some(Boolean)){event.preventDefault();event.returnValue="";}};
+    window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn);
+  },[dirty]);
+  function downloadLayoutBackup(){
+    const data={version:1,projectId,savedAt:Date.now(),panels:panels.map(editablePanel)};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));
+    const link=document.createElement("a");link.href=url;link.download=`crevena-dialogue-layout-${projectId}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  async function importLayoutBackup(file:File|undefined){
+    if(!file)return;
+    if(file.size>2_000_000){setMessage("대사·배치 백업은 2MB 이내여야 합니다.");return;}
+    const loaded=parseDraft(await file.text(),projectId);
+    if(!loaded || !loaded.panels.every(p=>panels.some(current=>current.id===p.id))){setMessage("이 프로젝트의 대사·배치 백업 파일이 아닙니다. 이미지 ZIP은 이미지 가져오기에서 선택해주세요.");return;}
+    setRecovery(loaded);
+  }
+  function checkpoint(force=false) {
+    const now=Date.now();
+    if(force || now-history.current.last>600){history.current.past.push(panels);history.current.past=history.current.past.slice(-40);}
+    history.current.future=[];history.current.last=now;setHistoryVersion(v=>v+1);
+  }
+  function applyLocalPanels(next:EditorPanelData[]){
+    const changed=changedPanels(next,savedPanels.current);
+    setPanels(next);setDirty(changed);
+    setBatchCompleted(new Set(next.filter(p=>!changed[p.id]&&p.hasFinalImage).map(p=>p.id)));
+  }
+  function travelHistory(redo:boolean) {
+    const from=redo?history.current.future:history.current.past;
+    const target=from.pop();if(!target)return;
+    (redo?history.current.past:history.current.future).push(panels);
+    applyLocalPanels(target);history.current.last=0;setSmartPreview(null);setV2Preview(null);setSelection(null);setHistoryVersion(v=>v+1);
+  }
   function updatePanel(panelId: string, updater: (p: EditorPanelData) => EditorPanelData) {
+    if (!dragState.current) checkpoint();
     setSmartPreview(null);
     setV2Preview(null);
     setPanels((prev) => prev.map((p) => (p.id === panelId ? updater(p) : p)));
@@ -188,10 +248,8 @@ export default function EditorClient({
 
   function goToPanel(index: number) {
     if (index === currentIndex) return;
-    if (dirty[panel.id]) {
-      const ok = window.confirm("저장하지 않은 변경사항이 있습니다. 저장하지 않고 이동할까요?");
-      if (!ok) return;
-    }
+    if(saving || rendering || batchRendering)return;
+    history.current.last=0;
     setSelection(null);
     setFinalPreviewUrl(null);
     setMessage(null);
@@ -454,8 +512,10 @@ export default function EditorClient({
   // 옮긴다. 좌표는 오버레이 컨테이너의 실제 렌더 크기(getBoundingClientRect)
   // 기준 비율로 변환하므로 캔버스 내부 해상도와 무관하게 동작하고,
   // 매 이동마다 clampBubbleRect로 경계를 강제한다.
-  function handlePointerDown(e: React.PointerEvent, target: Selection) {
-    if (!target || smartPreview) return;
+  function handlePointerDown(e: React.PointerEvent, target: Selection, resize=false) {
+    if (!target || smartPreview || v2Preview || saving || rendering || batchRendering || recovery) return;
+    e.stopPropagation();
+    checkpoint(true);
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     setSelection(target);
@@ -476,7 +536,9 @@ export default function EditorClient({
       startY = panel.coverTitleBubble.y;
     }
 
-    dragState.current = { target, startClientX: e.clientX, startClientY: e.clientY, startX, startY };
+    const box = target.kind === "dialogue" ? panel.dialogue.find(d=>d.id===target.id)?.bubble : target.kind === "narration" ? panel.narrationBubble : panel.coverTitleBubble;
+    if (!box) return;
+    dragState.current = { target, resize, startWidth:box.width, startHeight:box.height, startClientX: e.clientX, startClientY: e.clientY, startX, startY };
   }
 
   function handlePointerMove(e: React.PointerEvent) {
@@ -491,6 +553,11 @@ export default function EditorClient({
     const dyCanvasFrac = (e.clientY - drag.startClientY) / rect.height;
     const dx = dxCanvasFrac * (dims.width / fg.drawWidth);
     const dy = dyCanvasFrac * (dims.height / fg.drawHeight);
+    if (drag.resize) {
+      const size=resizeRect({x:drag.startX,y:drag.startY,width:drag.startWidth,height:drag.startHeight},dx,dy);
+      updatePanel(panel.id,p=>drag.target?.kind==="dialogue"?{...p,dialogue:p.dialogue.map(d=>d.id===(drag.target as {id:string}).id&&d.bubble?{...d,bubble:{...d.bubble,...size}}:d)}:drag.target?.kind==="narration"&&p.narrationBubble?{...p,narrationBubble:{...p.narrationBubble,...size}}:p.coverTitleBubble?{...p,coverTitleBubble:{...p.coverTitleBubble,...size}}:p);
+      return;
+    }
     const nextX = drag.startX + dx;
     const nextY = drag.startY + dy;
 
@@ -513,6 +580,10 @@ export default function EditorClient({
     }
   }
 
+  function centerSelection(){
+    if(!selection)return;
+    updatePanel(panel.id,p=>selection.kind==="dialogue"?{...p,dialogue:p.dialogue.map(d=>d.id===selection.id&&d.bubble?{...d,bubble:{...d.bubble,x:(1-d.bubble.width)/2}}:d)}:selection.kind==="narration"&&p.narrationBubble?{...p,narrationBubble:{...p.narrationBubble,x:(1-p.narrationBubble.width)/2}}:selection.kind==="cover"&&p.coverTitleBubble?{...p,coverTitleBubble:{...p.coverTitleBubble,x:(1-p.coverTitleBubble.width)/2}}:p);
+  }
   function handlePointerUp() {
     dragState.current = null;
   }
@@ -527,7 +598,9 @@ export default function EditorClient({
           : await saveBubbleLayoutAction(panel.id, panel.dialogue, panel.narration, panel.narrationBubble);
       if (result.ok) {
         const fresh = await getPanelEditorData(projectId);
-        if (fresh.ok) setPanels(fresh.panels);
+        const saved=fresh.ok?fresh.panels.find(p=>p.id===panel.id):panel;
+        if(saved){savedPanels.current=savedPanels.current.map(p=>p.id===saved.id?saved:p);setPanels(previous=>previous.map(p=>p.id===saved.id?saved:p));}
+        history.current={past:[],future:[],last:0};setHistoryVersion(v=>v+1);
         setDirty((prev) => ({ ...prev, [panel.id]: false }));
         setMessage("저장되었습니다.");
       } else {
@@ -542,11 +615,11 @@ export default function EditorClient({
 
   async function handleFinalRender() {
     if (!panel?.rawImageSignedUrl) return;
+    if(dirty[panel.id]){setMessage("현재 컷의 변경사항을 먼저 저장해주세요. 저장된 내용과 최종 이미지를 일치시킵니다.");return;}
     setRendering(true);
     setMessage(null);
     try {
-      // 저장하지 않은 편집 내용도 최종 이미지에는 즉시 반영되도록, 먼저
-      // 최신 상태로 캔버스를 다시 그린 뒤 그 결과를 그대로 내보낸다.
+      // 저장한 편집 내용을 미리보기 표시 여부와 무관하게 새 캔버스에 그린다.
         let url = objectUrlCache.current.get(panel.id);
         if (!url) {
           url = await fetchAsObjectUrl(panel.rawImageSignedUrl);
@@ -554,6 +627,7 @@ export default function EditorClient({
         }
         const canvas = document.createElement("canvas");
         await renderPanelToCanvas(canvas, {
+          validateText: true,
           characterNames: Object.fromEntries(characters.map((c) => [c.id, c.display_name])),
           imageObjectUrl: url, panelType: panel.panelType, dialogue: panel.dialogue,
           narration: panel.narration, narrationBubble: panel.narrationBubble,
@@ -594,6 +668,7 @@ export default function EditorClient({
         if (!url) { url = await fetchAsObjectUrl(target.rawImageSignedUrl); objectUrlCache.current.set(target.id, url); }
         const canvas = document.createElement("canvas");
         await renderPanelToCanvas(canvas, {
+          validateText: true,
           characterNames: Object.fromEntries(characters.map((c) => [c.id, c.display_name])),
           imageObjectUrl: url, panelType: target.panelType, dialogue: target.dialogue,
           narration: target.narration, narrationBubble: target.narrationBubble,
@@ -615,7 +690,19 @@ export default function EditorClient({
   if (!panel) return <p>편집할 컷이 없습니다.</p>;
 
   return (
-    <div className="editor-workspace">
+    <div className="editor-workspace" data-history-version={historyVersion}>
+      {recovery && <section className="card" role="status"><strong>저장하지 않은 편집 내용이 이 탭에 남아 있습니다.</strong><p>서버 내용과 다를 수 있습니다. 복구 후 비교하고 저장하세요.</p><button className="btn btn-primary" onClick={()=>{checkpoint(true);applyLocalPanels(restoreDraft(panels,recovery));setRecovery(null);}}>임시 작업 복구</button><button className="btn" onClick={()=>{try{sessionStorage.removeItem(draftKey);}catch{}setRecovery(null);}}>서버 내용 유지</button></section>}
+      {draftNotice && <p className="hint" role="status">{draftNotice}</p>}
+      <div className="form-actions">
+        <button className="btn" onClick={downloadLayoutBackup}>대사·배치 백업</button>
+        <input type="file" accept=".json" ref={backupInput} hidden onChange={e=>{void importLayoutBackup(e.target.files?.[0]);e.target.value="";}}/>
+        <button className="btn" disabled={saving||rendering||batchRendering||!!recovery} onClick={()=>backupInput.current?.click()}>백업 불러오기</button>
+        <button className="btn" aria-pressed={showGuides} onClick={()=>setShowGuides(v=>!v)}>정렬 안내선</button>
+        <button className="btn" disabled={!selection || saving || rendering || batchRendering || !!smartPreview || !!v2Preview || !!recovery} onClick={centerSelection}>선택한 글 상자 가운데 정렬</button>
+        <button className="btn" disabled={!history.current.past.length || saving || rendering || batchRendering || !!recovery} onClick={()=>travelHistory(false)}>실행 취소</button>
+        <button className="btn" disabled={!history.current.future.length || saving || rendering || batchRendering || !!recovery} onClick={()=>travelHistory(true)}>다시 실행</button>
+        <label>화면 확대 <select className="input" value={zoom} onChange={e=>setZoom(Number(e.target.value))}><option value={1}>100%</option><option value={1.5}>150%</option><option value={2}>200%</option></select></label>
+      </div>
       <details className="editor-toolbar">
       <summary>자동 배치 도구</summary>
       <section className="card" style={{ marginBottom: 14, minWidth: 0 }}>
@@ -688,16 +775,19 @@ export default function EditorClient({
           <button className="btn" type="button" aria-pressed={hideText} onClick={() => setHideText(!hideText)}>{hideText ? "대사 표시" : "그림만 보기"}</button>
           <span className="hint" role="status">{dirty[panel.id] ? "저장하지 않은 변경사항" : "저장된 상태"}</span>
         </div>
+        {foregroundRect?.warnings?.map(warning=><p className="error" role="alert" key={warning}>{warning}</p>)}
         {previewError && <p role="alert" className="error">{previewError}</p>}
+      <div className="editor-zoom-scroll">
       <div
         ref={overlayRef}
-        style={{ position: "relative", width: "100%", touchAction: "none" }}
+        style={{ position: "relative", width: `${zoom*100}%`, touchAction: "pan-y" }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
         <canvas ref={canvasRef} style={{ opacity: previewError ? 0.3 : 1, width: "100%", height: "auto", display: "block", borderRadius: 12 }} />
 
+        {showGuides && foregroundRect && <div aria-hidden="true" className="editor-guides" style={{left:`${foregroundRect.offsetX/dims.width*100}%`,top:`${foregroundRect.offsetY/dims.height*100}%`,width:`${foregroundRect.drawWidth/dims.width*100}%`,height:`${foregroundRect.drawHeight/dims.height*100}%`}}><span/><i/></div>}
         {!hideText && !previewError && (() => {
           const fg = foregroundRect ?? fallbackForeground(dims.width, dims.height);
           // bubble은 foreground(원본 이미지) 기준 0~1이므로, overlay(=canvas 전체) 기준 %로
@@ -728,10 +818,12 @@ export default function EditorClient({
                         selection?.kind === "dialogue" && selection.id === item.id
                           ? "2px solid #2563eb"
                           : "2px dashed rgba(37,99,235,0.5)",
-                      cursor: "grab",
+                      cursor: "grab", touchAction: "none",
                       boxSizing: "border-box",
                     }}
-                  />
+                  >
+                    <button type="button" className="resize-handle" aria-label="모서리 드래그로 크기 조절" onPointerDown={(e)=>handlePointerDown(e, { kind: "dialogue", id: item.id }, true)} />
+                  </div>
                 );
               })}
 
@@ -748,10 +840,12 @@ export default function EditorClient({
                         width: `${pct.width}%`,
                         height: `${pct.height}%`,
                         border: selection?.kind === "narration" ? "2px solid #f59e0b" : "2px dashed rgba(245,158,11,0.5)",
-                        cursor: "grab",
+                        cursor: "grab", touchAction: "none",
                         boxSizing: "border-box",
                       }}
-                    />
+                    >
+                    <button type="button" className="resize-handle" aria-label="모서리 드래그로 크기 조절" onPointerDown={(e)=>handlePointerDown(e, { kind: "narration" }, true)} />
+                  </div>
                   );
                 })()}
 
@@ -769,10 +863,12 @@ export default function EditorClient({
                         width: `${pct.width}%`,
                         height: `${pct.height}%`,
                         border: selection?.kind === "cover" ? "2px solid #16a34a" : "2px dashed rgba(22,163,74,0.5)",
-                        cursor: "grab",
+                        cursor: "grab", touchAction: "none",
                         boxSizing: "border-box",
                       }}
-                    />
+                    >
+                    <button type="button" className="resize-handle" aria-label="모서리 드래그로 크기 조절" onPointerDown={(e)=>handlePointerDown(e, { kind: "cover" }, true)} />
+                  </div>
                   );
                 })()}
             </>
@@ -781,7 +877,8 @@ export default function EditorClient({
       </div>
 
       </div>
-      <fieldset className="editor-inspector" disabled={Boolean(smartPreview || v2Preview)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+      </div>
+      <fieldset className="editor-inspector" disabled={Boolean(smartPreview || v2Preview || saving || rendering || batchRendering || recovery)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-actions" style={{ marginTop: 12 }}>
         <button type="button" className="btn" onClick={() => goToPanel(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
           이전 컷

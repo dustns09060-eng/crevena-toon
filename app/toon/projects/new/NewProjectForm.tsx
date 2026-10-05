@@ -39,6 +39,7 @@ export default function NewProjectForm({
 }) {
   const [state, formAction, pending] = useActionState(createProjectAction, initialState);
 
+  const [creationMode, setCreationMode] = useState("ai");
   const [title, setTitle] = useState("");
   const [selectedCharIds, setSelectedCharIds] = useState<string[]>([]);
   const [mode, setMode] = useState<"has" | "none">("has");
@@ -127,6 +128,10 @@ export default function NewProjectForm({
 
   return (
     <form action={formAction}>
+      <section className="card"><label htmlFor="creation-mode"><strong>어떻게 제작할까요?</strong></label>
+      <select id="creation-mode" name="creation_mode" className="input" value={creationMode} onChange={e=>{setCreationMode(e.target.value);if(e.target.value==="external"){setPanelCount(11);setMode("has");setTopicText(t=>t||"외부 그림으로 제작하는 에피소드");}}}>
+        <option value="ai">대본을 구성하고 AI로 그림 만들기</option><option value="external">내 그림·이미지 ZIP으로 제작하기</option>
+      </select><p className="hint">{creationMode==="external"?"프로젝트를 만든 뒤 표지 1장과 본문 10장을 가져옵니다. AI 호출 없이 대사를 편집할 수 있습니다.":"캐릭터와 소재를 선택해 스토리보드를 만듭니다. AI 생성은 실행할 때 비용이 발생할 수 있습니다."}</p></section>
       {!state.ok && state.message && <div className="banner banner-error">{state.message}</div>}
 
       <div className="field">
@@ -285,6 +290,7 @@ export default function NewProjectForm({
           id="panel_count"
           type="range"
           name="panel_count"
+          readOnly={creationMode === "external"}
           min={PROJECT_TOTAL_PANEL_COUNT_MIN}
           max={PROJECT_TOTAL_PANEL_COUNT_MAX}
           value={panelCount}

@@ -32,7 +32,7 @@ export async function createProjectAction(
   const raw = {
     title: String(formData.get("title") ?? ""),
     topic: String(formData.get("topic") ?? ""),
-    panel_count: Number(formData.get("panel_count") ?? PROJECT_DEFAULT_PANEL_COUNT),
+    panel_count: formData.get("creation_mode") === "external" ? 11 : Number(formData.get("panel_count") ?? PROJECT_DEFAULT_PANEL_COUNT),
     character_ids: formData.getAll("character_ids").map(String),
     series_id: seriesIdRaw.length > 0 ? seriesIdRaw : null,
   };
@@ -50,7 +50,7 @@ export async function createProjectAction(
   }
 
   revalidatePath("/toon/projects");
-  redirect(`/toon/projects/${project.id}`);
+  redirect(`/toon/projects/${project.id}${formData.get("creation_mode") === "external" ? "/external" : ""}`);
 }
 
 export async function deleteProjectAction(

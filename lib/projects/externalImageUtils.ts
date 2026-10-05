@@ -34,8 +34,8 @@ export function sortExternalImages<T extends { name: string }>(files: T[]): T[] 
   if (files.length !== EXTERNAL_IMAGE_COUNT) return [...files];
   const rank = (name: string) => {
     const stem = name.replace(/\.[^.]+$/, "").toLowerCase();
-    if (stem === "cover") return 0;
-    if (/^(0[1-9]|10)$/.test(stem)) return Number(stem);
+    if (stem === "cover" || stem === "표지") return 0;
+    if (/^(0?[0-9]|10)$/.test(stem)) return Number(stem);
     return -1;
   };
   const ranks = files.map((file) => rank(file.name));
@@ -51,7 +51,7 @@ export function reorderExternalImages<T>(items: T[], from: number, to: number): 
 }
 
 export function externalImageLabel(index: number): string {
-  return index === 0 ? "Cover" : `Panel ${index}`;
+  return index === 0 ? "표지" : `${index}컷`;
 }
 
 export function isExternalStoragePath(path: string, userId: string, projectId: string, number: number): boolean {

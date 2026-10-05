@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { pendingImageIds } from "../../../../lib/projects/generationQueue";
 import {
   approvePanelImageAction,
   editPanelImageAction,
@@ -48,6 +49,7 @@ export default function PanelImageGenerator({
   const [readinessErrors] = useState(initialReadinessErrors);
   const generatingPanelsRef = useRef(new Set<string>());
   const generateAllRef = useRef(false);
+  const stopRequested = useRef(false);
 
   // 021 — Storyboard 전체 재생성 없이 기존(확정된) 컷의 Location/Time of
   // Day만 직접 지정/수정한다. 저장 후 "이 컷 다시 만들기"로 새
@@ -115,6 +117,10 @@ export default function PanelImageGenerator({
       setStatusByPanel((prev) => ({ ...prev, [panelId]: "failed" }));
       setErrorByPanel((prev) => ({ ...prev, [panelId]: result.message ?? "생성에 실패했습니다." }));
       return false;
+    } catch {
+      setStatusByPanel(prev=>({...prev,[panelId]:"failed"}));
+      setErrorByPanel(prev=>({...prev,[panelId]:"연결이 끊겼습니다. 페이지를 새로 열어 생성 결과가 있는지 확인한 후 재시도하세요."}));
+      return false;
     } finally {
       generatingPanelsRef.current.delete(panelId);
     }
@@ -123,11 +129,13 @@ export default function PanelImageGenerator({
   async function handleGenerateAll() {
     if (generateAllRef.current) return;
     generateAllRef.current = true;
+    stopRequested.current = false;
     setGlobalError(null);
     setRunningAll(true);
     try {
       for (const panel of panels) {
-        if (images[panel.id]?.approved) continue; // 이미 승인된 컷은 재생성하지 않는다
+        if(stopRequested.current)break;
+        if (images[panel.id]?.approved || images[panel.id]?.candidate) continue; // 이미 승인된 컷은 재생성하지 않는다
         const ok = await generateOne(panel.id);
         if (!ok) break; // 실패하면 멈춘다 — 나머지는 사용자가 "이어서 생성"으로 재시도
       }
@@ -190,7 +198,7 @@ export default function PanelImageGenerator({
     }
   }
 
-  const remaining = panels.length - approvedCount;
+  const remaining = pendingImageIds(panels.map(p=>p.id),images).length;
 
   return (
     <div>
@@ -205,6 +213,7 @@ export default function PanelImageGenerator({
         </div>
       )}
 
+      <div className="card"><strong>다음 일괄 생성: {remaining}장</strong><p className="hint">이미 승인했거나 후보 이미지가 있는 컷은 다시 생성하지 않습니다. 비용은 연결된 AI 모델·품질·사용량에 따라 달라집니다. 재생성·부분 수정도 추가 비용이 발생할 수 있습니다.</p>{runningAll && <button className="btn" onClick={()=>{stopRequested.current=true;setGlobalError("현재 컷이 끝나면 생성을 멈춥니다.");}}>현재 컷 이후 중지</button>}</div>
       {globalError && <div className="banner banner-error">{globalError}</div>}
 
       {readinessErrors.length === 0 && (

@@ -25,9 +25,12 @@ export default function FinalClient({
   initialCaption: CaptionView | null;
 }) {
   const router = useRouter();
+  const [phonePreview, setPhonePreview] = useState(false);
   const [status, setStatus] = useState(projectStatus);
   const [captionText, setCaptionText] = useState(initialCaption?.caption ?? "");
   const [hashtagsText, setHashtagsText] = useState((initialCaption?.hashtags ?? []).join(" "));
+  const [savedCaptionValues, setSavedCaptionValues] = useState({text:initialCaption?.caption??"",tags:(initialCaption?.hashtags??[]).join(" ")});
+  const captionDirty=captionText!==savedCaptionValues.text||hashtagsText!==savedCaptionValues.tags;
   const [hasSavedCaption, setHasSavedCaption] = useState(Boolean(initialCaption));
   const [generatingCaption, setGeneratingCaption] = useState(false);
   const [savingCaption, setSavingCaption] = useState(false);
@@ -92,6 +95,7 @@ export default function FinalClient({
       const result = await saveCaptionAction(projectId, captionText, hashtags);
       if (result.ok) {
         setHasSavedCaption(true);
+        setSavedCaptionValues({text:captionText,tags:hashtagsText});
         setMessage("캡션이 저장되었습니다.");
       } else {
         setMessage(result.message ?? "캡션 저장에 실패했습니다.");
@@ -111,6 +115,7 @@ export default function FinalClient({
   }
 
   async function handleComplete() {
+    if(captionDirty){setMessage("수정한 캡션·해시태그를 먼저 저장해주세요.");return;}
     setCompleting(true);
     setMessage(null);
     try {
@@ -164,7 +169,8 @@ export default function FinalClient({
 
       {message && <p className="hint">{message}</p>}
 
-      <div className="final-grid">
+      <section className="card"><h2>발행 전 확인</h2><p>표지와 컷 순서, 대사 오탈자, 글자 잘림을 확인하세요. PNG·ZIP에는 현재 최종 이미지가 들어갑니다.</p><p className="hint">완성 이미지 {panels.filter(p=>p.finalSignedUrl).length}/{panels.length}장 · ZIP은 표지부터 순서대로 저장됩니다.</p><button className="btn" aria-pressed={phonePreview} onClick={()=>setPhonePreview(v=>!v)}>{phonePreview?"전체 화면으로 보기":"휴대폰 폭으로 확인"}</button></section>
+      <div className={`final-grid${phonePreview ? " phone-preview" : ""}`}>
         {panels.map((panel, index) => (
           <div className="card" key={panel.panelNumber}>
             <h3 style={{ fontSize: 14, marginTop: 0 }}>
@@ -207,6 +213,7 @@ export default function FinalClient({
       </div>
 
       <h2 style={{ fontSize: 16 }}>인스타그램 캡션</h2>
+      {captionDirty && <p role="status" className="hint">캡션·해시태그 변경사항이 아직 저장되지 않았습니다.</p>}
       <div className="card">
         <div className="field">
           <label>캡션</label>

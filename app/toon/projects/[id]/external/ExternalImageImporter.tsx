@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { readImageArchive } from "../../../../../lib/projects/imageArchive";
 import { useRouter } from "next/navigation";
 import { createClient } from "../../../../../lib/supabase/client";
 import { cancelExternalUploadAction, finishExternalUploadAction, prepareExternalUploadAction } from "../../../../../lib/projects/externalImages";
@@ -15,6 +16,8 @@ export default function ExternalImageImporter({ projectId }: { projectId: string
   const [items, setItems] = useState<Selection[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [unpacking, setUnpacking] = useState(false);
+  const zipRef = useRef<HTMLInputElement>(null);
   const [done, setDone] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -33,7 +36,7 @@ export default function ExternalImageImporter({ projectId }: { projectId: string
     URL.revokeObjectURL(item.url);
     urls.current.delete(item.url);
   }
-  function handleSelect(files: FileList | null) {
+  function handleSelect(files: FileList | File[] | null) {
     if (!files) return;
     if (files.length > EXTERNAL_IMAGE_COUNT) { setMessage("최대 11장만 선택할 수 있습니다."); return; }
     const selected = sortExternalImages(Array.from(files));
@@ -57,6 +60,10 @@ export default function ExternalImageImporter({ projectId }: { projectId: string
   }
   function move(from: number, to: number) {
     setItems((prev) => reorderExternalImages(prev, from, to));
+  }
+  async function selectZip(file:File|undefined){
+    if(!file)return;setUnpacking(true);setMessage(null);
+    try{handleSelect(await readImageArchive(file));}catch(error){setMessage(error instanceof Error?error.message:"ZIP을 읽을 수 없습니다.");}finally{setUnpacking(false);}
   }
   async function confirm() {
     if (busyRef.current) return;
@@ -85,7 +92,7 @@ export default function ExternalImageImporter({ projectId }: { projectId: string
           if (!cleaned.ok) throw new Error(cleaned.message ?? "업로드 파일 정리에 실패했습니다.");
         });
       setDone(true);
-      setMessage("11장 가져오기가 완료되었습니다. Editor에서 제목과 대사를 입력하세요.");
+      setMessage("11장 가져오기가 완료되었습니다. 편집기에서 제목과 대사를 입력하세요.");
       router.refresh();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "업로드에 실패했습니다.");
@@ -97,10 +104,14 @@ export default function ExternalImageImporter({ projectId }: { projectId: string
 
   return (
     <div className="card" style={{ maxWidth: 740, width: "100%", boxSizing: "border-box" }}>
-      <p>텍스트 없는 이미지 11장을 선택하세요. 확인 전에는 서버에 저장되지 않습니다.</p>
+      <h2>표지 + 본문 10장 가져오기</h2>
+      <p>글자 없는 PNG·JPG·WebP 11장 또는 이미지 ZIP을 선택하세요. 프로젝트 설정 JSON은 이곳에 올리지 않습니다.</p>
+      <p className="hint">완성 이미지에 이미 그려진 자막은 따로 이동할 수 없습니다. 첫 번째는 표지입니다. 순서와 중복을 확인한 다음 가져오기를 누르세요.</p>
+      <input ref={zipRef} type="file" accept=".zip" hidden onChange={e=>{void selectZip(e.target.files?.[0]);e.target.value="";}}/>
+      <button type="button" className="btn" disabled={busy||done||unpacking} onClick={()=>zipRef.current?.click()}>{unpacking?"ZIP 확인 중…":"이미지 ZIP 선택"}</button>
       <input ref={inputRef} type="file" accept=".png,.jpg,.jpeg,.webp" multiple hidden onChange={(e) => { handleSelect(e.target.files); e.target.value = ""; }} />
       <input ref={replaceRef} type="file" accept=".png,.jpg,.jpeg,.webp" hidden onChange={(e) => { handleReplace(e.target.files); e.target.value = ""; }} />
-      <button type="button" className="btn" disabled={busy || done} onClick={() => inputRef.current?.click()}>이미지 11장 선택</button>
+      <button type="button" className="btn" disabled={busy || done || unpacking} onClick={() => inputRef.current?.click()}>이미지 11장 선택</button>
       <p className="hint">{items.length}/11장 · 1장당 최대 10MB · 목록을 끌어서 순서를 바꾸거나 이동 버튼을 누르세요.</p>
       {message && <p role="status" className="hint">{message}</p>}
       <div style={{ display: "grid", gap: 10 }}>
@@ -114,15 +125,15 @@ export default function ExternalImageImporter({ projectId }: { projectId: string
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <button type="button" className="btn" disabled={busy || done || index === 0} onClick={() => move(index, index - 1)} aria-label={`${externalImageLabel(index)} 위로 이동`}>↑</button>
               <button type="button" className="btn" disabled={busy || done || index === items.length - 1} onClick={() => move(index, index + 1)} aria-label={`${externalImageLabel(index)} 아래로 이동`}>↓</button>
-              <button type="button" className="btn" disabled={busy || done} onClick={() => { replaceIndex.current = index; replaceRef.current?.click(); }}>교체</button>
-              <button type="button" className="btn" disabled={busy || done} onClick={() => { release(item); setItems((prev) => prev.filter((p) => p.key !== item.key)); }}>제거</button>
+              <button type="button" className="btn" disabled={busy || done || unpacking} onClick={() => { replaceIndex.current = index; replaceRef.current?.click(); }}>교체</button>
+              <button type="button" className="btn" disabled={busy || done || unpacking} onClick={() => { release(item); setItems((prev) => prev.filter((p) => p.key !== item.key)); }}>제거</button>
             </div>
           </div>
         ))}
       </div>
       <div className="form-actions" style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Link href={`/toon/projects/${projectId}`} className="btn">취소</Link>
-        {!done ? <button type="button" className="btn btn-primary" disabled={busy || items.length !== 11} onClick={confirm}>{busy ? "업로드 중..." : "11장 가져오기"}</button> :
+        {!done ? <button type="button" className="btn btn-primary" disabled={busy || unpacking || items.length !== 11} onClick={confirm}>{busy ? "업로드 중..." : "11장 가져오기"}</button> :
           <Link href={`/toon/projects/${projectId}/editor`} className="btn btn-primary">대사/내레이션 편집하기</Link>}
       </div>
     </div>

@@ -18,7 +18,7 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function downloadSingleFinalImage(signedUrl: string, filename: string): Promise<void> {
