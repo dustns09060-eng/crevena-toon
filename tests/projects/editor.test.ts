@@ -460,3 +460,19 @@ describe("saveFinalRenderAction", () => {
     expect(updates[0]).toEqual({ image_url: result.storagePath });
   });
 });
+
+test("caption composition survives reload without narration text", async () => {
+  const composition = {x:0.08,y:0.82,width:0.84,height:0.13,composition:"caption"};
+  getProjectPanelsMock.mockResolvedValue([{...APPROVED_PANEL,narration:null,narration_bubble:composition}]);
+  const { getPanelEditorData } = await import("../../lib/projects/editor");
+  const result = await getPanelEditorData("proj-1");
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.panels[0].narrationBubble).toEqual(composition);
+});
+test("caption composition is saved through the authorized layout action", async () => {
+  const { saveBubbleLayoutAction } = await import("../../lib/projects/editor");
+  const composition = {x:0.08,y:0.82,width:0.84,height:0.13,composition:"caption" as const};
+  const result = await saveBubbleLayoutAction("panel-1", [], null, composition);
+  expect(result.ok).toBe(true);
+  expect(currentSupabase._calls["toon_panels.update"]).toContainEqual(expect.objectContaining({narration_bubble:expect.objectContaining({composition:"caption",layout_source:"MANUAL"})}));
+});

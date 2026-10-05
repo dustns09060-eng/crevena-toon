@@ -56,12 +56,12 @@ export default async function CharacterDetailPage({
       </div>
 
       <div className="card">
-        <h2 style={{ fontSize: 15, marginTop: 0 }}>Character Bible (AI 분석)</h2>
+        <h2 style={{ fontSize: 15, marginTop: 0 }}>캐릭터 외모 설정</h2>
         <CharacterBibleSection characterId={id} character={character} />
       </div>
 
       <div className="card">
-        <h2 style={{ fontSize: 15, marginTop: 0 }}>Character Sheet</h2>
+        <h2 style={{ fontSize: 15, marginTop: 0 }}>캐릭터 이미지 생성·승인</h2>
         <CharacterSheetSection
           characterId={id}
           initialApproved={approvedSheet}

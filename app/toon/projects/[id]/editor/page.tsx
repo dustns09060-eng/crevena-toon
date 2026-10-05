@@ -3,6 +3,7 @@ import { createClient } from "../../../../../lib/supabase/server";
 import { getProject, getProjectCharacters, getProjectPanels } from "../../../../../lib/projects/service";
 import { checkEditorReadiness } from "../../../../../lib/projects/editorUtils";
 import { prepareEditorPanels } from "../../../../../lib/projects/editorLoad";
+import ProjectStageNav from "../ProjectStageNav";
 import EditorClient from "./EditorClient";
 
 /**
@@ -58,10 +59,11 @@ export default async function PanelEditorPage({
     : 0;
 
   return (
-    <main className="page">
+    <main className="page-wide">
       <div className="topbar">
         <h1>{project.title} — 말풍선 편집</h1>
       </div>
+      <ProjectStageNav projectId={id} active="editor" imagesEnabled editorEnabled finalEnabled={panels.length > 0 && panels.every((p) => Boolean(p.image_url))} />
       <EditorClient projectId={id} initialPanels={editorPanels} characters={characters} initialPanelIndex={initialPanelIndex} externalProject={externalProject} />
     </main>
   );

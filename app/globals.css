@@ -559,3 +559,35 @@ a {
     height: 24px;
   }
 }
+
+/* Desktop studio and image-first libraries. */
+.toon-header__inner { max-width: 1440px; }
+.page-wide { max-width: 1440px; }
+.library-page { padding-top: 32px; }
+.library-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(240px,1fr)); gap: 24px; margin: 28px 0; }
+.library-card { display: flex; flex-direction: column; padding: 16px; gap: 16px; margin: 0; min-width: 0; }
+.library-card__art,.library-card__portrait { width: 100%; aspect-ratio: 4/5; border-radius: 8px; background: #f2eee7; object-fit: contain; overflow: hidden; }
+.library-card__art { display: flex; align-items: center; justify-content: center; text-decoration: none; color: var(--color-text-muted); }
+.library-card__art img { width: 100%; height: 100%; object-fit: contain; }
+.library-card .char-card__actions { margin-top: auto; justify-content: space-between; flex-wrap: wrap; }
+.library-menu summary { cursor: pointer; color: var(--color-text-muted); padding: 8px; }
+.library-menu[open] .btn { margin-top: 8px; }
+.project-stage-nav { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.editor-workspace { display: grid; grid-template-columns: minmax(0,1fr) minmax(300px,390px); gap: 20px; align-items: start; }
+.editor-workspace > :not(.editor-stage):not(.editor-inspector) { grid-column: 1/-1; }
+.editor-stage { position: sticky; top: 80px; width: 100%; max-width: 680px; justify-self: center; min-width: 0; }
+.editor-preview-tools { justify-content: space-between; margin-bottom: 12px; }
+.editor-inspector { max-height: calc(100dvh - 100px); overflow-y: auto; padding-right: 8px !important; }
+.editor-inspector .card { margin-top: 16px; }
+.editor-inspector textarea { min-height: 72px; }
+@media (max-width: 850px) {
+ .editor-workspace { grid-template-columns: minmax(0,1fr); }
+ .editor-stage { position: static; }
+ .editor-inspector { max-height: none; overflow: visible; padding-right: 0 !important; }
+ .project-stage-nav { grid-template-columns: repeat(2,minmax(0,1fr)); }
+ .library-grid { gap: 16px; }
+}
+
+.editor-toolbar > summary { cursor: pointer; padding: 12px 16px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); }
+.editor-preview-tools .btn { flex: none; }
+@media (min-width: 851px) { .editor-stage { max-width: min(680px, calc((100dvh - 160px) * 0.8)); } }

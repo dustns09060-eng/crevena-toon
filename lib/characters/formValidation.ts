@@ -12,6 +12,13 @@ export const CharacterFormSchema = z.object({
   representative_outfit: z.string().trim().max(500, "500자 이내로 입력해주세요.").optional(),
 });
 
+export const CharacterAppearanceSchema = z.object({
+  hairstyle: z.string().trim().min(1).max(200),
+  hair_color: z.string().trim().min(1).max(100),
+  face_features: z.string().trim().min(1).max(500),
+  body_type: z.string().trim().min(1).max(200),
+});
+
 export type CharacterFormInput = z.infer<typeof CharacterFormSchema>;
 
 export type CharacterFormValidationResult =

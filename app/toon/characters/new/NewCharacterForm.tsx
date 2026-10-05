@@ -18,6 +18,7 @@ interface PickedPhoto {
 
 export default function NewCharacterForm() {
   const [state, formAction, pending] = useActionState(createCharacterAction, initialState);
+  const [mode, setMode] = useState("photo");
   const [photos, setPhotos] = useState<PickedPhoto[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -131,6 +132,17 @@ export default function NewCharacterForm() {
       </div>
 
       <div className="field">
+        <label htmlFor="creation-mode">만드는 방법</label>
+        <select className="input" id="creation-mode" name="creation_mode" value={mode} onChange={(e) => setMode(e.target.value)}>
+          <option value="photo">사진을 바탕으로 만들기</option>
+          <option value="text">사진 없이 원하는 외모로 만들기</option>
+        </select>
+        <p className="hint">설정 저장 후 캐릭터 이미지 생성 버튼을 눌러 후보를 만들고, 마음에 드는 이미지를 승인하세요. 이미지 생성 시 AI 사용 비용이 발생할 수 있습니다.</p>
+      </div>
+      {mode === "text" && <div className="card">
+        {([["hairstyle", "머리 모양", "예: 턱선 길이의 단발"], ["hair_color", "머리 색", "예: 짙은 갈색"], ["face_features", "얼굴 특징", "예: 둥근 얼굴, 작은 코, 웃는 눈"], ["body_type", "체형·비율", "예: 성인 여성, 아담한 3등신"]] as const).map(([name, label, placeholder]) => <div className="field" key={name}><label htmlFor={name}>{label} *</label><input className="input" id={name} name={name} placeholder={placeholder} required maxLength={name === "hair_color" ? 100 : name === "face_features" ? 500 : 200} /></div>)}
+      </div>}
+      <div className="field" hidden={mode !== "photo"}>
         <label>참조 사진 * (최소 1장, 최대 {MAX_PHOTOS}장)</label>
         <p className="upload-note">
           얼굴이 잘 보이고 다른 사람이 적게 나온 사진일수록 캐릭터를 더 일관되게 만들 수 있어요.
@@ -176,7 +188,7 @@ export default function NewCharacterForm() {
         <button
           type="submit"
           className="btn btn-primary"
-          disabled={pending || photos.length < MIN_PHOTOS}
+          disabled={pending || (mode === "photo" && photos.length < MIN_PHOTOS)}
         >
           {pending ? "저장 중..." : "캐릭터 만들기"}
         </button>

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "../../../../../lib/supabase/server";
 import { getFinalPageData } from "../../../../../lib/projects/finalPage";
+import ProjectStageNav from "../ProjectStageNav";
 import FinalClient from "./FinalClient";
 
 export default async function FinalPage({ params }: { params: Promise<{ id: string }> }) {
@@ -21,6 +22,7 @@ export default async function FinalPage({ params }: { params: Promise<{ id: stri
       <div className="topbar">
         <h1>{data.project.title} — 최종 확인</h1>
       </div>
+      <ProjectStageNav projectId={id} active="final" imagesEnabled editorEnabled finalEnabled />
       <FinalClient
         projectId={data.project.id}
         projectTitle={data.project.title}

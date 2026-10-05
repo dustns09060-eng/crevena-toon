@@ -1,5 +1,6 @@
 "use client";
 
+import { computeCaptionLayout } from "./captionLayout";
 import type { ToonCoverTitleBubble, ToonDialogueItem, ToonNarrationBubble, ToonPanelType } from "../../src/db/types";
 import { DIALOGUE_TEXT_PADDING_RATIO, computeBubbleTailTriangle, shouldRenderBubbleTail, wrapText } from "./bubbleLayout";
 import { type ContainRect, computeContainRect, computeCoverRect, normalizedRectToCanvasPx, scaleFontSizeToForeground } from "./containFit";
@@ -18,6 +19,8 @@ import { type ContainRect, computeContainRect, computeCoverRect, normalizedRectT
  */
 
 export interface RenderPanelInput {
+  hideText?: boolean;
+  characterNames?: Record<string, string>;
   imageObjectUrl: string;
   panelType: ToonPanelType;
   dialogue: ToonDialogueItem[];
@@ -311,27 +314,50 @@ export async function renderPanelToCanvas(canvas: HTMLCanvasElement, input: Rend
   const img = await loadImage(input.imageObjectUrl);
   ctx.clearRect(0, 0, input.width, input.height);
 
-  const foreground = computeContainRect(input.width, input.height, img.naturalWidth, img.naturalHeight);
+  const composition = input.panelType === "scene" ? input.narrationBubble?.composition ?? "overlay" : "overlay";
+  ctx.font = `400 ${input.width * 36 / 1080}px ${FONT_FAMILY}`;
+  const captions = computeCaptionLayout(composition === "caption"
+    ? [...input.dialogue.map((item) => input.characterNames?.[item.character_id] ? `${input.characterNames[item.character_id]}: ${item.text}` : item.text), input.narration ?? ""]
+    : composition === "narration-below" ? [input.narration ?? ""] : [], input.width, input.height, (text) => ctx.measureText(text).width);
+  const foreground = computeContainRect(input.width, captions.artHeight, img.naturalWidth, img.naturalHeight);
 
   // 1) 여백을 채우는 흐린 배경 (COVER, blur) — foreground보다 항상 덜 선명해야 한다.
-  drawBlurredBackground(ctx, img, input.width, input.height);
+  if (composition === "overlay") {
+    drawBlurredBackground(ctx, img, input.width, input.height);
+  } else {
+    ctx.fillStyle = "#fffaf2";
+    ctx.fillRect(0, 0, input.width, input.height);
+  }
 
   // 2) 원본 이미지 본체 (CONTAIN, stretch/crop 없음, 선명)
   ctx.drawImage(img, foreground.offsetX, foreground.offsetY, foreground.drawWidth, foreground.drawHeight);
 
   // 3) 대사/내레이션은 항상 foreground 좌표계 기준.
-  for (const item of input.dialogue) {
+  for (const item of input.hideText || composition === "caption" ? [] : input.dialogue) {
     drawBubble(ctx, item, foreground, input.width, input.height);
   }
-  if (input.narration && input.narrationBubble) {
+  if (!input.hideText && composition === "overlay" && input.narration && input.narrationBubble) {
     drawNarration(ctx, input.narration, input.narrationBubble, foreground);
   }
 
   // 4) 표지 텍스트는 panel_type === 'cover'일 때만, scene 컷에는 절대 그리지 않는다.
-  if (input.panelType === "cover" && input.coverTitle && input.coverTitleBubble) {
+  if (!input.hideText && input.panelType === "cover" && input.coverTitle && input.coverTitleBubble) {
     drawCoverText(ctx, input.coverTitle, input.coverSubtitle, input.coverTitleBubble, foreground);
   }
 
+  if (!input.hideText && captions.blocks.length) {
+    ctx.save();
+    ctx.fillStyle = "#302b27";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = `400 ${captions.fontSize}px ${FONT_FAMILY}`;
+    let y = captions.artHeight + captions.padding;
+    for (const lines of captions.blocks) {
+      for (const line of lines) { ctx.fillText(line, captions.padding, y); y += captions.lineHeight; }
+      y += captions.fontSize * 0.6;
+    }
+    ctx.restore();
+  }
   return foreground;
 }
 

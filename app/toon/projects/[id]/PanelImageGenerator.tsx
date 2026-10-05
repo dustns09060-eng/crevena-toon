@@ -233,7 +233,7 @@ export default function PanelImageGenerator({
 
             return (
               <div className="card" key={panel.id}>
-                <h3 style={{ fontSize: 14, marginTop: 0 }}>컷 {panel.panel_number}</h3>
+                <h3 style={{ fontSize: 14, marginTop: 0 }}>{panel.panel_type === "cover" ? "표지" : `${panel.panel_number - (panels[0]?.panel_type === "cover" ? 1 : 0)}컷`}</h3>
                 <p className="hint" style={{ marginTop: 0 }}>
                   {panel.scene}
                 </p>

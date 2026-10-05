@@ -127,6 +127,20 @@ export async function generateImageFromPrompt(
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY가 설정되지 않았습니다 (.env 확인)");
 
+  if (referenceImages.length === 0) {
+    const response = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: MODEL, prompt, size: "1024x1024" }),
+      signal: AbortSignal.timeout(180_000),
+    });
+    if (!response.ok) throw new Error(`OpenAI 이미지 생성 오류 (${response.status})`);
+    const result = await response.json() as { data?: { b64_json?: string }[] };
+    const image = result.data?.[0]?.b64_json;
+    if (!image) throw new Error("OpenAI 응답에 이미지 데이터가 없습니다.");
+    return Buffer.from(image, "base64");
+  }
+
   const files = referenceImages.map((img, i) => ({
     fieldName: "image[]",
     filename: `reference-${i}.${img.mimeType.split("/")[1] || "jpg"}`,

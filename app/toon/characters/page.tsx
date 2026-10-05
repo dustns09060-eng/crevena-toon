@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "../../../lib/supabase/server";
 import { getCharacters, getCharacterCardSignedUrl } from "../../../lib/characters/service";
-import { signOutAction } from "../../../lib/auth/actions";
 import DeleteCharacterButton from "./DeleteCharacterButton";
 
 export default async function CharactersPage() {
@@ -18,25 +17,10 @@ export default async function CharactersPage() {
   );
 
   return (
-    <main className="page">
+    <main className="page-wide library-page">
       <div className="topbar">
         <h1>내 캐릭터</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Link href="/toon/series" className="btn">
-            시리즈
-          </Link>
-          <Link href="/toon/locations" className="btn">
-            장소
-          </Link>
-          <Link href="/toon/projects" className="btn">
-            프로젝트
-          </Link>
-          <form action={signOutAction}>
-            <button type="submit" className="btn">
-              로그아웃
-            </button>
-          </form>
-        </div>
+        <Link href="/toon/characters/new" className="btn btn-primary">+ 새 캐릭터</Link>
       </div>
 
       {characters.length === 0 ? (
@@ -48,14 +32,14 @@ export default async function CharactersPage() {
         </div>
       ) : (
         <>
-          <div className="char-list">
+          <div className="library-grid">
             {characters.map((c, i) => (
-              <div className="card char-card" key={c.id}>
+              <div className="card library-card" key={c.id}>
                 {thumbnails[i] ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={thumbnails[i]!} alt="" className="char-card__thumb" />
+                  <img src={thumbnails[i]!} alt={`${c.display_name} 캐릭터`} loading="lazy" className="library-card__portrait" />
                 ) : (
-                  <div className="char-card__thumb" />
+                  <div className="library-card__portrait" />
                 )}
                 <div className="char-card__body">
                   <div className="char-card__name">{c.display_name}</div>
@@ -63,9 +47,9 @@ export default async function CharactersPage() {
                 </div>
                 <div className="char-card__actions">
                   <Link href={`/toon/characters/${c.id}`} className="btn">
-                    수정
+                    캐릭터 열기
                   </Link>
-                  <DeleteCharacterButton characterId={c.id} characterName={c.display_name} />
+                  <details className="library-menu"><summary aria-label={`${c.display_name} 관리`}>관리</summary><DeleteCharacterButton characterId={c.id} characterName={c.display_name} /></details>
                 </div>
               </div>
             ))}

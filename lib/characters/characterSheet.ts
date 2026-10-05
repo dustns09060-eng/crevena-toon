@@ -83,9 +83,7 @@ export async function generateCharacterSheetAction(characterId: string): Promise
 
   try {
     const allReferences = await listReferences(supabase, characterId);
-    if (allReferences.length === 0) {
-      return { ok: false, message: "참조 사진이 없습니다. 먼저 사진을 등록해주세요." };
-    }
+    // A saved appearance bible also supports original characters without photos.
 
     // 대표 사진을 최우선으로, 추가로 최대 2장만 사용한다 (비용/노이즈/배경-소품
     // 오염 위험을 줄이기 위해 5장을 전부 보내지 않는다 — STEP 4 §5).

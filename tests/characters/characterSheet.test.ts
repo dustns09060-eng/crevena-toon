@@ -160,14 +160,15 @@ describe("generateCharacterSheetAction", () => {
     expect(generateMock).not.toHaveBeenCalled();
   });
 
-  test("참조 사진이 없으면 거부된다", async () => {
+  test("저장된 외모로 사진 없이 캐릭터를 생성한다", async () => {
     getCharacterMock.mockResolvedValue(OWNED_CHARACTER_WITH_BIBLE);
     listReferencesMock.mockResolvedValue([]);
+    generateMock.mockResolvedValue({ imageBytes: Buffer.from([1, 2, 3]), provider: "gemini", model: "test" });
     const { generateCharacterSheetAction } = await import("../../lib/characters/characterSheet");
-
     const result = await generateCharacterSheetAction("char-1");
-    expect(result.ok).toBe(false);
-    expect(generateMock).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(generateMock).toHaveBeenCalledWith(expect.stringContaining("짧은 단발머리"), []);
+    expect(currentSupabase._calls["storage.toon-references.download"]).toBeUndefined();
   });
 
   test("성공 시 candidate가 생성되고, 캐릭터의 approved 이미지(character_sheet_url)는 건드리지 않는다", async () => {

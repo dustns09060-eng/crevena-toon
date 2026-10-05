@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "../../../lib/supabase/server";
@@ -13,16 +14,22 @@ export default async function ProjectsPage() {
   if (!user) redirect("/toon/login");
 
   const projects = await getProjects(supabase);
-  const statusLabels = await Promise.all(
-    projects.map(async (p) => getProjectStatusLabel(p, await getProjectPanels(supabase, p.id)))
-  );
+  const panelGroups = await Promise.all(projects.map((p) => getProjectPanels(supabase, p.id)));
+  const statusLabels = projects.map((p, index) => getProjectStatusLabel(p, panelGroups[index]));
+  const thumbnails = await Promise.all(panelGroups.map(async (panels) => {
+    const cover = panels.find((panel) => panel.panel_type === "cover") ?? panels[0];
+    const path = cover?.image_url ?? cover?.raw_image_url;
+    if (!path) return null;
+    const { data } = await supabase.storage.from("toon-panels").createSignedUrl(path, 3600);
+    return data?.signedUrl ?? null;
+  }));
 
   return (
-    <main className="page">
+    <main className="page-wide library-page">
       <div className="topbar">
-        <h1>인스타툰 프로젝트</h1>
-        <Link href="/toon/characters" className="btn">
-          캐릭터
+        <div><p className="page-eyebrow">CREVENA STUDIO</p><h1>내 작품</h1><p className="hint">이야기를 시작하고, 그림을 다듬고, 연재를 완성하세요.</p></div>
+        <Link href="/toon/projects/new" className="btn">
+          + 새 작품
         </Link>
       </div>
 
@@ -35,9 +42,12 @@ export default async function ProjectsPage() {
         </div>
       ) : (
         <>
-          <div className="char-list">
+          <div className="library-grid">
             {projects.map((p, i) => (
-              <div className="card char-card" key={p.id}>
+              <article className="card library-card" key={p.id}>
+                <Link href={`/toon/projects/${p.id}${p.status === "completed" ? "/final" : ""}`} className="library-card__art" aria-label={`${p.title} 열기`}>
+                  {thumbnails[i] ? <img src={thumbnails[i]!} alt={`${p.title} 표지`} loading="lazy" /> : <span>새 이야기를 기다리는 중</span>}
+                </Link>
                 <div className="char-card__body">
                   <div className="char-card__name">{p.title}</div>
                   <div className="char-card__role">
@@ -63,9 +73,9 @@ export default async function ProjectsPage() {
                         : "스토리보드"}
                     </Link>
                   )}
-                  <DeleteProjectButton projectId={p.id} projectTitle={p.title} />
+                  <details className="library-menu"><summary aria-label={`${p.title} 관리`}>관리</summary><DeleteProjectButton projectId={p.id} projectTitle={p.title} /></details>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
           <Link href="/toon/projects/new" className="btn btn-primary btn-block">

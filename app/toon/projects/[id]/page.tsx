@@ -41,7 +41,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         </div>
       </div>
 
-      <ProjectStageNav projectId={id} active="storyboard" imagesEnabled={imagesEnabled} />
+      <ProjectStageNav projectId={id} active="storyboard" imagesEnabled={imagesEnabled} editorEnabled={panels.length > 0 && panels.every((p) => Boolean(p.raw_image_url))} finalEnabled={panels.length > 0 && panels.every((p) => Boolean(p.image_url))} />
 
       {project.panel_count === 11 && project.status !== "completed" && (
         <div className="card">

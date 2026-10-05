@@ -57,6 +57,7 @@ export const ToonBubbleSchema = z
 /** STEP 7 — 내레이션 박스. dialogue 말풍선과 형태가 달라 별도 스키마로 둔다. */
 export const ToonNarrationBubbleSchema = z
   .object({
+    composition: z.enum(["overlay", "narration-below", "caption"]).optional(),
     x: z.number().min(0).max(1),
     y: z.number().min(0).max(1),
     width: z.number().gt(0).max(1),

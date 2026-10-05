@@ -82,6 +82,8 @@ export default function EditorClient({
     initialPanelIndex >= 0 && initialPanelIndex < initialPanels.length ? initialPanelIndex : 0
   );
   const [selection, setSelection] = useState<Selection>(null);
+  const [hideText, setHideText] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [batchRendering, setBatchRendering] = useState(false);
@@ -142,7 +144,10 @@ export default function EditorClient({
         }
       }
       if (cancelled || !canvasRef.current) return;
-      const foreground = await renderPanelToCanvas(canvasRef.current, {
+      const previewCanvas = document.createElement("canvas");
+      const foreground = await renderPanelToCanvas(previewCanvas, {
+        characterNames: Object.fromEntries(characters.map((c) => [c.id, c.display_name])),
+        hideText,
         imageObjectUrl: objectUrl,
         panelType: panel.panelType,
         dialogue: panel.dialogue,
@@ -154,9 +159,15 @@ export default function EditorClient({
         width: dims.width,
         height: dims.height,
       });
-      if (!cancelled) setForegroundRect(foreground);
+      if (!cancelled && canvasRef.current) {
+        canvasRef.current.width = dims.width;
+        canvasRef.current.height = dims.height;
+        canvasRef.current.getContext("2d")?.drawImage(previewCanvas, 0, 0);
+        setForegroundRect(foreground);
+      }
     }
-    draw();
+    setPreviewError(null);
+    draw().catch((error) => { if (!cancelled) setPreviewError(error instanceof Error ? error.message : "미리보기를 만들지 못했습니다."); });
     return () => {
       cancelled = true;
     };
@@ -172,6 +183,7 @@ export default function EditorClient({
     panel?.coverTitleBubble,
     dims.width,
     dims.height,
+    hideText,
   ]);
 
   function goToPanel(index: number) {
@@ -521,19 +533,34 @@ export default function EditorClient({
       } else {
         setMessage(result.message ?? "저장에 실패했습니다.");
       }
+    } catch {
+      setMessage("저장 중 연결이 끊겼습니다. 변경사항은 화면에 남아 있으니 다시 저장해주세요.");
     } finally {
       setSaving(false);
     }
   }
 
   async function handleFinalRender() {
-    if (!canvasRef.current) return;
+    if (!panel?.rawImageSignedUrl) return;
     setRendering(true);
     setMessage(null);
     try {
       // 저장하지 않은 편집 내용도 최종 이미지에는 즉시 반영되도록, 먼저
       // 최신 상태로 캔버스를 다시 그린 뒤 그 결과를 그대로 내보낸다.
-      const blob = await canvasToPngBlob(canvasRef.current);
+        let url = objectUrlCache.current.get(panel.id);
+        if (!url) {
+          url = await fetchAsObjectUrl(panel.rawImageSignedUrl);
+          objectUrlCache.current.set(panel.id, url);
+        }
+        const canvas = document.createElement("canvas");
+        await renderPanelToCanvas(canvas, {
+          characterNames: Object.fromEntries(characters.map((c) => [c.id, c.display_name])),
+          imageObjectUrl: url, panelType: panel.panelType, dialogue: panel.dialogue,
+          narration: panel.narration, narrationBubble: panel.narrationBubble,
+          coverTitle: panel.coverTitle, coverSubtitle: panel.coverSubtitle,
+          coverTitleBubble: panel.coverTitleBubble, width: dims.width, height: dims.height,
+        });
+        const blob = await canvasToPngBlob(canvas);
       const file = new File([blob], "final.png", { type: "image/png" });
       const result = await saveFinalRenderAction(panel.id, file);
       if (result.ok) {
@@ -543,6 +570,8 @@ export default function EditorClient({
       } else {
         setMessage(result.message ?? "최종 이미지 생성에 실패했습니다.");
       }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "최종 이미지 생성에 실패했습니다.");
     } finally {
       setRendering(false);
     }
@@ -565,6 +594,7 @@ export default function EditorClient({
         if (!url) { url = await fetchAsObjectUrl(target.rawImageSignedUrl); objectUrlCache.current.set(target.id, url); }
         const canvas = document.createElement("canvas");
         await renderPanelToCanvas(canvas, {
+          characterNames: Object.fromEntries(characters.map((c) => [c.id, c.display_name])),
           imageObjectUrl: url, panelType: target.panelType, dialogue: target.dialogue,
           narration: target.narration, narrationBubble: target.narrationBubble,
           coverTitle: target.coverTitle, coverSubtitle: target.coverSubtitle,
@@ -585,20 +615,22 @@ export default function EditorClient({
   if (!panel) return <p>편집할 컷이 없습니다.</p>;
 
   return (
-    <div>
+    <div className="editor-workspace">
+      <details className="editor-toolbar">
+      <summary>자동 배치 도구</summary>
       <section className="card" style={{ marginBottom: 14, minWidth: 0 }}>
         <div className="form-actions" style={{ flexWrap: "wrap" }}>
           <button type="button" className="btn btn-primary" onClick={() => void previewV2()} disabled={Boolean(v2Progress && v2Progress !== "미리보기 준비 완료") || smartSaving || saving || batchRendering}>전체 자동 배치</button>
           <button type="button" className="btn" onClick={() => void previewV2(panel.id)} disabled={Boolean(v2Progress && v2Progress !== "미리보기 준비 완료") || smartSaving || saving || batchRendering}>이 컷 자동 배치</button>
-          <button type="button" className="btn" onClick={() => previewSmart(false)} disabled={smartSaving || saving || batchRendering}>v1 자동 배치</button>
+          <button type="button" className="btn" onClick={() => previewSmart(false)} disabled={smartSaving || saving || batchRendering}>기본 자동 배치</button>
         </div>
-        <p className="hint">이미지 영역을 분석하고 안전한 위치를 미리 보여줍니다. 수동·레거시 배치는 기본 보호됩니다.</p>
+        <p className="hint">이미지 영역을 분석하고 안전한 위치를 미리 보여줍니다. 기존에 저장한 배치는 유지됩니다.</p>
         {cacheSummary && <p className="hint">분석 필요 {cacheSummary.needed}장 · 캐시 사용 {cacheSummary.cached}장</p>}
         {v2Progress && <p role="status" className="hint">{v2Progress}</p>}
         {v2Preview && <div aria-label="Smart Layout v2 미리보기" style={{ overflowWrap: "anywhere" }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><input type="checkbox" checked={v2Preview.overwrite} onChange={(e) => { setV2Overwrite(e.target.checked); void previewV2(v2Preview.targetId, e.target.checked); }} /> 수동 배치도 다시 자동 배치</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{v2Preview.entries.map((entry, index) => <button type="button" className="btn" key={entry.target.id} onClick={() => goToPanel(index)} style={{ maxWidth: "100%", whiteSpace: "normal", textAlign: "left" }}>
-            {panels[index].panelType === "cover" ? "Cover" : `Panel ${panels[index].panelNumber - (panels[0].panelType === "cover" ? 1 : 0)}`} — {entry.result.status}<br />
+            {panels[index].panelType === "cover" ? "표지" : `Panel ${panels[index].panelNumber - (panels[0].panelType === "cover" ? 1 : 0)}`} — {entry.result.status}<br />
             분석: {entry.analysis} · 배치: {entry.result.source} → {entry.result.status === "PASS" ? "SMART_V2" : "유지"}
             {entry.failureCode && <><br />분석 실패 · {entry.failureCode === "PROVIDER_503" || entry.failureCode === "PROVIDER_TIMEOUT" ? "일시적 AI 오류" : entry.failureCode === "INVALID_STRUCTURED_RESPONSE" || entry.failureCode === "VALIDATION_FAILED" ? "응답 형식 오류" : entry.failureCode === "IMAGE_DOWNLOAD_FAILED" || entry.failureCode === "IMAGE_PREPROCESS_FAILED" ? "이미지 준비 오류" : "분석 처리 오류"}</>}
             {entry.result.avoided.length > 0 && <><br />회피 영역: {entry.result.avoided.join(", ")}</>}
@@ -613,7 +645,7 @@ export default function EditorClient({
           <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><input type="checkbox" checked={smartPreview.overwrite} onChange={(e) => { setSmartOverwrite(e.target.checked); previewSmart(Boolean(smartPreview.targetId), e.target.checked, smartPreview.targetId); }} /> 기존 배치도 다시 자동 배치</label>
           <p className="hint">기존 배치는 기본적으로 건너뜁니다. 컷 이름을 눌러 이미지 위 배치를 확인하세요.</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{smartPreview.results.map((result, index) => <button type="button" className="btn" key={panels[index].id} onClick={() => goToPanel(index)}>
-            {panels[index].panelType === "cover" ? "Cover" : `Panel ${panels[index].panelNumber - (panels[0].panelType === "cover" ? 1 : 0)}`} — {result.status}{result.reason ? ` (${result.reason})` : ""}
+            {panels[index].panelType === "cover" ? "표지" : `Panel ${panels[index].panelNumber - (panels[0].panelType === "cover" ? 1 : 0)}`} — {result.status}{result.reason ? ` (${result.reason})` : ""}
           </button>)}</div>
           <div className="form-actions" style={{ marginTop: 12, flexWrap: "wrap" }}>
             <button type="button" className="btn" onClick={() => setSmartPreview(null)} disabled={smartSaving}>취소</button>
@@ -621,6 +653,7 @@ export default function EditorClient({
           </div>
         </div>}
       </section>
+      </details>
       {externalProject && <DialogueImportPanel projectId={projectId} disabled={Boolean(smartPreview || v2Preview) || saving || rendering || batchRendering || Object.values(dirty).some(Boolean)} onComplete={async (numbers, resultMessage) => {
         const fresh = await getPanelEditorData(projectId);
         if (!fresh.ok) { setMessage("가져오기는 저장되었으나 편집기 새로고침에 실패했습니다. 페이지를 다시 열어주세요."); return; }
@@ -643,13 +676,19 @@ export default function EditorClient({
             className={`btn ${i === currentIndex ? "btn-primary" : ""}`}
             onClick={() => goToPanel(i)}
           >
-            {p.panelType === "cover" ? "Cover" : `${p.panelNumber - (panels[0]?.panelType === "cover" ? 1 : 0)}컷`}{dirty[p.id] ? " *" : ""}
+            {p.panelType === "cover" ? "표지" : `${p.panelNumber - (panels[0]?.panelType === "cover" ? 1 : 0)}컷`}{dirty[p.id] ? " *" : ""}
           </button>
         ))}
       </div>
 
       {message && <p className="hint">{message}</p>}
 
+      <div className="editor-stage">
+        <div className="form-actions editor-preview-tools">
+          <button className="btn" type="button" aria-pressed={hideText} onClick={() => setHideText(!hideText)}>{hideText ? "대사 표시" : "그림만 보기"}</button>
+          <span className="hint" role="status">{dirty[panel.id] ? "저장하지 않은 변경사항" : "저장된 상태"}</span>
+        </div>
+        {previewError && <p role="alert" className="error">{previewError}</p>}
       <div
         ref={overlayRef}
         style={{ position: "relative", width: "100%", touchAction: "none" }}
@@ -657,9 +696,9 @@ export default function EditorClient({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        <canvas ref={canvasRef} style={{ width: "100%", height: "auto", display: "block", borderRadius: 12 }} />
+        <canvas ref={canvasRef} style={{ opacity: previewError ? 0.3 : 1, width: "100%", height: "auto", display: "block", borderRadius: 12 }} />
 
-        {(() => {
+        {!hideText && !previewError && (() => {
           const fg = foregroundRect ?? fallbackForeground(dims.width, dims.height);
           // bubble은 foreground(원본 이미지) 기준 0~1이므로, overlay(=canvas 전체) 기준 %로
           // 변환하려면 offset/drawWidth를 거쳐 canvas 전체 크기로 다시 나눠야 한다.
@@ -672,7 +711,7 @@ export default function EditorClient({
 
           return (
             <>
-              {panel.dialogue.map((item) => {
+              {(panel.narrationBubble?.composition === "caption" ? [] : panel.dialogue).map((item) => {
                 if (!item.bubble) return null;
                 const pct = toCanvasPct(item.bubble);
                 return (
@@ -696,7 +735,7 @@ export default function EditorClient({
                 );
               })}
 
-              {panel.narrationBubble &&
+              {(!panel.narrationBubble?.composition || panel.narrationBubble.composition === "overlay") && panel.narration && panel.narrationBubble &&
                 (() => {
                   const pct = toCanvasPct(panel.narrationBubble);
                   return (
@@ -741,7 +780,8 @@ export default function EditorClient({
         })()}
       </div>
 
-      <fieldset disabled={Boolean(smartPreview || v2Preview)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+      </div>
+      <fieldset className="editor-inspector" disabled={Boolean(smartPreview || v2Preview)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-actions" style={{ marginTop: 12 }}>
         <button type="button" className="btn" onClick={() => goToPanel(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
           이전 컷
@@ -759,6 +799,19 @@ export default function EditorClient({
         </button>
       </div>
 
+      {panel.panelType !== "cover" && <section className="card">
+        <label htmlFor="text-composition"><strong>그림과 대사 배치</strong></label>
+        <select id="text-composition" className="input" value={panel.narrationBubble?.composition ?? "overlay"} onChange={(event) => {
+          const composition = event.target.value as "overlay" | "narration-below" | "caption";
+          setSelection(null);
+          updatePanel(panel.id, (current) => ({ ...current, narrationBubble: { ...(current.narrationBubble ?? getDefaultNarrationBubble()), composition } }));
+        }}>
+          <option value="overlay">그림 위 말풍선</option>
+          <option value="narration-below">내레이션만 그림 아래</option>
+          <option value="caption">모든 대사를 그림 아래</option>
+        </select>
+        <p className="hint">그림 아래 배치는 원본을 자르지 않고 별도 글 영역을 확보합니다. 아래 배치한 글의 위치·크기는 자동으로 맞춥니다. 미리보기 확인 후 저장하세요.</p>
+      </section>}
       {panel.panelType === "cover" ? (
         <div className="card" onClick={() => panel.coverTitleBubble && setSelection({ kind: "cover" })}>
           <h3 style={{ fontSize: 14 }}>표지 제목/부제</h3>
@@ -859,7 +912,7 @@ export default function EditorClient({
               ))}
             </select>
           </div>
-          <div className="field">
+          {panel.narrationBubble?.composition !== "caption" && <div className="field">
             <label>말풍선 스타일</label>
             <select
               className="input"
@@ -872,8 +925,8 @@ export default function EditorClient({
                 </option>
               ))}
             </select>
-          </div>
-          {item.bubble && (
+          </div>}
+          {item.bubble && panel.narrationBubble?.composition !== "caption" && (
             <>
               <div className="field"><label>말풍선 배경 투명도 ({Math.round((item.bubble.opacity ?? 1) * 100)}%)</label>
                 <input type="range" min={0} max={100} value={Math.round((item.bubble.opacity ?? 1) * 100)} onChange={(e) => handleBubbleOpacityChange(item.id, Number(e.target.value) / 100)} />
@@ -920,7 +973,7 @@ export default function EditorClient({
                     checked={item.bubble.tail_enabled === true}
                     onChange={(e) => handleTailEnabledChange(item.id, e.target.checked)}
                   />{" "}
-                  말풍선 꼬리(Tail) 사용
+                  말풍선 꼬리 사용
                 </label>
               </div>
               {item.bubble.tail_enabled === true && (
@@ -957,7 +1010,7 @@ export default function EditorClient({
             rows={2}
           />
         </div>
-        {panel.narrationBubble && (
+        {panel.narrationBubble && (!panel.narrationBubble.composition || panel.narrationBubble.composition === "overlay") && (
           <>
             <div className="field"><label>내레이션 배경</label><select className="input" value={panel.narrationBubble.preset ?? "dark"} onChange={(e) => handleNarrationPresetChange(e.target.value as ToonNarrationPreset)}>
               <option value="dark">어둡게</option><option value="light">밝게</option><option value="cream">크림</option><option value="soft">부드럽게</option>
@@ -994,13 +1047,13 @@ export default function EditorClient({
       )}
 
       <div className="form-actions" style={{ marginTop: 16 }}>
-        <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+        <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || Boolean(previewError)}>
           {saving ? "저장 중..." : "저장"}
         </button>
-        <button type="button" className="btn btn-primary" onClick={handleFinalRender} disabled={rendering || batchRendering}>
+        <button type="button" className="btn btn-primary" onClick={handleFinalRender} disabled={rendering || batchRendering || Boolean(previewError)}>
           {rendering ? "만드는 중..." : "최종 이미지 만들기"}
         </button>
-        <button type="button" className="btn btn-primary" onClick={handleBatchRender} disabled={rendering || batchRendering}>
+        <button type="button" className="btn btn-primary" onClick={handleBatchRender} disabled={rendering || batchRendering || Boolean(previewError)}>
           {batchRendering ? "순서대로 만드는 중..." : batchFailed.length ? "실패한 컷만 다시 만들기" : "전체 최종 이미지 만들기"}
         </button>
         {batchCompleted.size === panels.length && <Link className="btn" href={`/toon/projects/${projectId}/final`}>최종 이미지·ZIP 확인</Link>}
@@ -1009,7 +1062,7 @@ export default function EditorClient({
       {(batchCompleted.size > 0 || batchFailed.length > 0) && (
         <div role="status" className="card" style={{ display: "grid", gap: 4 }}>
           {panels.map((p) => <span key={p.id}>
-            {p.panelType === "cover" ? "Cover" : String(p.panelNumber - (panels[0]?.panelType === "cover" ? 1 : 0)).padStart(2, "0")}: {batchCompleted.has(p.id) ? "PASS" : batchFailed.includes(p.panelNumber) ? "FAIL" : "대기"}
+            {p.panelType === "cover" ? "표지" : String(p.panelNumber - (panels[0]?.panelType === "cover" ? 1 : 0)).padStart(2, "0")}: {batchCompleted.has(p.id) ? "완료" : batchFailed.includes(p.panelNumber) ? "실패" : "대기"}
           </span>)}
         </div>
       )}

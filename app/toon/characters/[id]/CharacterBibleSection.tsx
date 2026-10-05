@@ -69,6 +69,7 @@ export default function CharacterBibleSection({
     key: K,
     value: CharacterBibleAnalysisParsed[K]
   ) {
+    setHasUnsaved(true);
     setBible((prev) => (prev ? { ...prev, [key]: value } : prev));
   }
 

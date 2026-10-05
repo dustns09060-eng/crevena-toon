@@ -67,7 +67,7 @@ export default async function ProjectImagesPage({ params }: { params: Promise<{ 
         </div>
       </div>
 
-      <ProjectStageNav projectId={id} active="images" imagesEnabled />
+      <ProjectStageNav projectId={id} active="images" imagesEnabled editorEnabled={panels.length > 0 && panels.every((p) => Boolean(p.raw_image_url))} finalEnabled={panels.length > 0 && panels.every((p) => Boolean(p.image_url))} />
 
       <div className="card workflow-intro">
         <h2>이미지 컷 만들기</h2>

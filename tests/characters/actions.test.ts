@@ -81,3 +81,23 @@ describe("createCharacterAction", () => {
     expect(redirectMock).toHaveBeenCalledWith("/toon/characters/char-new-1?new=1&photoError=1");
   });
 });
+
+describe("original character creation", () => {
+  test("saves validated appearance without uploading photos", async () => {
+    const { createCharacterAction } = await import("../../lib/characters/actions");
+    const form = buildFormData({}, 0);
+    form.set("creation_mode", "text");
+    const appearance = { hairstyle: "단발", hair_color: "갈색", face_features: "둥근 얼굴", body_type: "성인 3등신" };
+    Object.entries(appearance).forEach(([key, value]) => form.set(key, value));
+    await expect(createCharacterAction({ ok: false }, form)).rejects.toThrow(RedirectSignal);
+    expect(createCharacterMock).toHaveBeenCalledWith(currentSupabase, expect.anything(), appearance);
+    expect(uploadReferenceImageMock).not.toHaveBeenCalled();
+  });
+  test("missing appearance fails before a character is created", async () => {
+    const { createCharacterAction } = await import("../../lib/characters/actions");
+    const form = buildFormData({}, 0);
+    form.set("creation_mode", "text");
+    expect((await createCharacterAction({ ok: false }, form)).ok).toBe(false);
+    expect(createCharacterMock).not.toHaveBeenCalled();
+  });
+});

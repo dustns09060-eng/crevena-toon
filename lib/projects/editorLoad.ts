@@ -26,7 +26,7 @@ export async function prepareEditorPanels(supabase: SupabaseClient, panels: Toon
       ...item,
       bubble: item.bubble ?? getDefaultBubbleForIndex(index),
     }));
-    const narrationBubble = panel.narration ? (panel.narration_bubble ?? getDefaultNarrationBubble()) : null;
+    const narrationBubble = panel.narration_bubble ?? (panel.narration ? getDefaultNarrationBubble() : null);
     const coverTitleBubble =
       panel.panel_type === "cover" && panel.cover_title ? (panel.cover_title_bubble ?? getDefaultCoverTitleBubble()) : null;
 

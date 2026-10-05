@@ -139,6 +139,7 @@ export interface ToonDialogueItem {
 /** STEP 7 — 내레이션 박스는 대사 말풍선과 별개 도형(상단/하단 모서리 둥근 사각형)이라
  * dialogue와 다른 구조로 분리해서 관리한다. */
 export interface ToonNarrationBubble {
+  composition?: "overlay" | "narration-below" | "caption";
   x: number;
   y: number;
   width: number;

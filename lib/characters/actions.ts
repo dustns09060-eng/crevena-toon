@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "../supabase/server";
-import { validateCharacterForm } from "./formValidation";
+import { CharacterAppearanceSchema, validateCharacterForm } from "./formValidation";
 import * as characterService from "./service";
 import {
   uploadReferenceImage,
@@ -49,12 +49,17 @@ export async function createCharacterAction(
   }
 
   const files = formData.getAll("photos").filter((f): f is File => f instanceof File && f.size > 0);
-  const countCheck = validatePhotoCount(files.length);
-  if (!countCheck.valid) {
-    return { ok: false, message: countCheck.reason };
+  const textMode = formData.get("creation_mode") === "text";
+  let appearance: { hairstyle: string; hair_color: string; face_features: string; body_type: string } | undefined;
+  if (textMode) {
+    const parsed = CharacterAppearanceSchema.safeParse(Object.fromEntries(["hairstyle", "hair_color", "face_features", "body_type"].map((key) => [key, formData.get(key)])));
+    if (!parsed.success) return { ok: false, message: "머리 모양·색, 얼굴 특징, 체형을 모두 입력해주세요. 각 설명은 200자 이내(얼굴은 500자)로 작성해주세요." };
+    appearance = parsed.data;
+  } else {
+    const countCheck = validatePhotoCount(files.length);
+    if (!countCheck.valid) return { ok: false, message: countCheck.reason };
   }
-
-  const character = await characterService.createCharacter(supabase, validation.data);
+  const character = await characterService.createCharacter(supabase, validation.data, appearance);
 
   // 캐릭터 row는 이미 생성됐다 — 사진 업로드가 일부/전부 실패해도 이 폼으로
   // 다시 돌아가 재제출하게 하면 동일 캐릭터가 중복 생성된다. 실패하더라도
@@ -62,7 +67,7 @@ export async function createCharacterAction(
   // 이어서 추가하게 한다.
   let primarySet = false;
   let photoUploadFailed = false;
-  for (const file of files) {
+  for (const file of textMode ? [] : files) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     try {
       await uploadReferenceImage(supabase, user.id, character.id, {

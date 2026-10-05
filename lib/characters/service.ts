@@ -14,11 +14,13 @@ function buildPlaceholderVisualPrompt(input: CharacterFormInput): string {
 
 export async function createCharacter(
   supabase: SupabaseClient,
-  input: CharacterFormInput
+  input: CharacterFormInput,
+  appearance?: { hairstyle: string; hair_color: string; face_features: string; body_type: string }
 ): Promise<ToonCharacter> {
   const { data, error } = await supabase
     .from("toon_characters")
     .insert({
+      ...appearance,
       display_name: input.display_name,
       role: input.role,
       personality: input.personality || null,
