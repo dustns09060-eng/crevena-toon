@@ -22,7 +22,12 @@ export function resizeRect(rect:{x:number;y:number;width:number;height:number},d
  return {...rect,width:Math.min(1-rect.x,Math.max(0.06,rect.width+dx)),height:Math.min(1-rect.y,Math.max(0.04,rect.height+dy))};
 }
 
+function stableContent(value:unknown):unknown {
+ if(Array.isArray(value))return value.map(stableContent);
+ if(value && typeof value==="object")return Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,stableContent(item)]));
+ return value;
+}
 export function changedPanels(current:EditorPanelData[],saved:EditorPanelData[]):Record<string,boolean>{
- const content=(p:EditorPanelData)=>{const {updatedAt: _updatedAt,...edit}=editablePanel(p);return JSON.stringify(edit);};
+ const content=(p:EditorPanelData)=>{const {updatedAt: _updatedAt,...edit}=editablePanel(p);return JSON.stringify(stableContent(edit));};
  return Object.fromEntries(current.map(p=>[p.id,content(p)!==content(saved.find(s=>s.id===p.id)??p)]));
 }

@@ -19,3 +19,10 @@ test("undo marks only changed panels, without requiring unrelated panels to be r
  expect(changedPanels([{...panel,coverTitle:"changed"},second],[panel,second])).toEqual({p:true,other:false});
  expect(changedPanels([panel,second],[panel,second])).toEqual({p:false,other:false});
 });
+
+test("restoring parsed backups ignores object property ordering",()=>{
+ const bubble={style:"round",height:.1,width:.4,y:.1,x:.1,tail_direction:"none"};
+ const original={...panel,dialogue:[{id:"11111111-1111-4111-8111-111111111111",character_id:"22222222-2222-4222-8222-222222222222",text:"대사",bubble_type:"speech",bubble}]} as EditorPanelData;
+ const draft=parseDraft(JSON.stringify({version:1,projectId:"project",savedAt:1,panels:[original]}),"project")!;
+ expect(changedPanels(restoreDraft([original],draft),[original])).toEqual({p:false});
+});
