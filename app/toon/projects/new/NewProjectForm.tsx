@@ -32,7 +32,9 @@ export default function NewProjectForm({
   characters,
   series,
   seriesCharacterIds,
+  seed,
 }: {
+  seed?: {title:string;seriesId:string|null;characterIds:string[]};
   characters: CharacterOption[];
   series: SeriesOption[];
   seriesCharacterIds: Record<string, string[]>;
@@ -40,8 +42,8 @@ export default function NewProjectForm({
   const [state, formAction, pending] = useActionState(createProjectAction, initialState);
 
   const [creationMode, setCreationMode] = useState("ai");
-  const [title, setTitle] = useState("");
-  const [selectedCharIds, setSelectedCharIds] = useState<string[]>([]);
+  const [title, setTitle] = useState(seed?.title??"");
+  const [selectedCharIds, setSelectedCharIds] = useState<string[]>(seed?.characterIds??[]);
   const [mode, setMode] = useState<"has" | "none">("has");
   const [topicText, setTopicText] = useState("");
   const [ideas, setIdeas] = useState<StoryIdea[] | null>(null);
@@ -52,7 +54,7 @@ export default function NewProjectForm({
 
   const [seriesList, setSeriesList] = useState<SeriesOption[]>(series);
   const [seriesCharMap, setSeriesCharMap] = useState<Record<string, string[]>>(seriesCharacterIds);
-  const [selectedSeriesId, setSelectedSeriesId] = useState<string>(INDEPENDENT_PROJECT);
+  const [selectedSeriesId, setSelectedSeriesId] = useState<string>(seed?.seriesId??INDEPENDENT_PROJECT);
   const [newSeriesTitle, setNewSeriesTitle] = useState("");
   const [seriesError, setSeriesError] = useState<string | null>(null);
   const [creatingSeries, startCreatingSeries] = useTransition();

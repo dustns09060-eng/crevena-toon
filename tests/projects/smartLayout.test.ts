@@ -56,11 +56,11 @@ describe("Smart Layout apply action", () => {
     expect(state.panels).toEqual(original);
     expect(await applySmartLayoutAction(projectId, targets(), false)).toMatchObject({ ok: true, count: 11 });
     expect(state.writes).toHaveLength(11);
-    expect(state.writes[0]).toEqual({ cover_title_bubble: expect.any(Object) });
-    expect(Object.keys(state.writes[1]).sort()).toEqual(["dialogue", "narration_bubble"]);
+    expect(state.writes[0]).toEqual({ cover_title_bubble: expect.any(Object), image_url: null });
+    expect(Object.keys(state.writes[1]).sort()).toEqual(["dialogue", "image_url", "narration_bubble"]);
     state.panels.forEach((p, i) => {
       expect([p.raw_image_url, p.image_url, p.scene, p.expression, p.image_prompt]).toEqual([
-        original[i].raw_image_url, original[i].image_url, original[i].scene, original[i].expression, original[i].image_prompt,
+        original[i].raw_image_url, null, original[i].scene, original[i].expression, original[i].image_prompt,
       ]);
     });
   });
@@ -88,7 +88,7 @@ describe("Smart Layout apply action", () => {
       const { updated_at: _previous, ...before } = original[i];
       expect(current).toEqual(before);
     });
-    expect(state.writes.every((v) => Object.keys(v).every((k) => ["dialogue", "narration_bubble", "cover_title_bubble"].includes(k)))).toBe(true);
+    expect(state.writes.every((v) => Object.keys(v).every((k) => ["dialogue", "narration_bubble", "cover_title_bubble", "image_url"].includes(k)))).toBe(true);
   });
 
   test("20-panel project is supported and existing completed project is protected", async () => {

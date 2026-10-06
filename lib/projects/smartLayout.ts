@@ -55,7 +55,7 @@ export async function applySmartLayoutAction(projectId: string, targets: Target[
       for (const { panel, result } of ready) {
         const values = panel.panel_type === "cover" ? { cover_title_bubble: result.panel.coverTitleBubble }
           : { dialogue: result.panel.dialogue, narration_bubble: result.panel.narrationBubble };
-        const { data, error } = await supabase.from("toon_panels").update(values)
+        const { data, error } = await supabase.from("toon_panels").update({...values, image_url: null})
           .eq("id", panel.id).eq("project_id", projectId).eq("updated_at", panel.updated_at).select("id,updated_at");
         if (error || data?.length !== 1) throw Error("write failed");
         saved.push({ panel, updatedAt: data[0].updated_at });
@@ -64,7 +64,7 @@ export async function applySmartLayoutAction(projectId: string, targets: Target[
       let rollbackFailed = false;
       for (const { panel, updatedAt } of saved.reverse()) {
         try {
-          const { data, error } = await supabase.from("toon_panels").update(original(panel))
+          const { data, error } = await supabase.from("toon_panels").update({...original(panel), image_url: panel.image_url})
             .eq("id", panel.id).eq("project_id", projectId).eq("updated_at", updatedAt).select("id");
           if (error || data?.length !== 1) rollbackFailed = true;
         } catch { rollbackFailed = true; }

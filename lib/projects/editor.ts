@@ -143,7 +143,7 @@ export async function saveBubbleLayoutAction(
   const manualNarration = narrationBubble && markManual(narrationBubble);
   const { error: updateErr } = await supabase
     .from("toon_panels")
-    .update({ dialogue: manualDialogue, narration, narration_bubble: manualNarration })
+    .update({ dialogue: manualDialogue, narration, narration_bubble: manualNarration, image_url: null })
     .eq("id", panelId);
   if (updateErr) return { ok: false, message: "저장에 실패했습니다." };
 
@@ -187,7 +187,7 @@ export async function saveCoverLayoutAction(
   const manualCover = coverTitleBubble && markManual(coverTitleBubble);
   const { error: updateErr } = await supabase
     .from("toon_panels")
-    .update({ cover_title: coverTitle, cover_subtitle: coverSubtitle, cover_title_bubble: manualCover })
+    .update({ cover_title: coverTitle, cover_subtitle: coverSubtitle, cover_title_bubble: manualCover, image_url: null })
     .eq("id", panelId);
   if (updateErr) return { ok: false, message: "저장에 실패했습니다." };
 

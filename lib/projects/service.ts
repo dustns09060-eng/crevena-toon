@@ -136,6 +136,9 @@ export async function cleanupProjectStorage(
     }
   }
 
+  const versionsPrefix = `${userId}/${projectId}/editor-versions`;
+  allPaths.push(...(await listAll(versionsPrefix)).filter(file=>/^\d{13}-[a-f0-9-]{36}\.json$/.test(file.name)).map(file=>`${versionsPrefix}/${file.name}`));
+
   // Analysis cache lives only under this project's panel/image identity folders.
   for (const panelId of panelIds) {
     const panelPrefix = `${userId}/${projectId}/analysis/${panelId}`;

@@ -67,11 +67,11 @@ describe("dialogue import server action", () => {
     const result = await saveDialogueImportAction(projectId, document, inspection.fingerprint, false);
     expect(result).toMatchObject({ ok: true, count: 10 });
     expect(state.writes).toHaveLength(11);
-    expect(state.writes[0]).toEqual({ cover_title: "제목", cover_subtitle: "부제", cover_title_bubble: expect.any(Object) });
-    expect(Object.keys(state.writes[1]).sort()).toEqual(["dialogue", "narration", "narration_bubble"]);
+    expect(state.writes[0]).toEqual({ cover_title: "제목", cover_subtitle: "부제", cover_title_bubble: expect.any(Object), image_url: null });
+    expect(Object.keys(state.writes[1]).sort()).toEqual(["dialogue", "image_url", "narration", "narration_bubble"]);
     for (const [i, row] of state.panels.entries()) {
       expect(row.raw_image_url).toBe(before[i].raw_image_url);
-      expect(row.image_url).toBe(before[i].image_url);
+      expect(row.image_url).toBeNull();
       expect([row.scene, row.expression, row.image_prompt]).toEqual([before[i].scene, before[i].expression, before[i].image_prompt]);
     }
     expect(state.images).toHaveLength(11);
@@ -106,7 +106,7 @@ describe("dialogue import server action", () => {
       expect(current).toEqual(previous);
     }
     expect(state.images).toHaveLength(11);
-    expect(state.writes.every((p) => Object.keys(p).every((key) => ["cover_title", "cover_subtitle", "cover_title_bubble", "dialogue", "narration", "narration_bubble"].includes(key)))).toBe(true);
+    expect(state.writes.every((p) => Object.keys(p).every((key) => ["cover_title", "cover_subtitle", "cover_title_bubble", "dialogue", "narration", "narration_bubble", "image_url"].includes(key)))).toBe(true);
   });
 
   test("stale preview is rejected and non-external project never writes", async () => {

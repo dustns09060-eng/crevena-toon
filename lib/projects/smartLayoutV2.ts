@@ -171,7 +171,7 @@ export async function applySmartV2Action(projectId: string, targets: Target[], o
       for (const { panel, result } of updates) {
         const values = panel.panel_type === "cover" ? { cover_title_bubble: result.panel.coverTitleBubble }
           : { dialogue: result.panel.dialogue, narration_bubble: result.panel.narrationBubble };
-        const { data, error } = await supabase.from("toon_panels").update(values).eq("id", panel.id).eq("project_id", projectId)
+        const { data, error } = await supabase.from("toon_panels").update({...values, image_url: null}).eq("id", panel.id).eq("project_id", projectId)
           .eq("updated_at", panel.updated_at).select("id,updated_at");
         if (error || data?.length !== 1) throw Error("write failed");
         saved.push({ panel, updatedAt: data[0].updated_at });
@@ -179,7 +179,7 @@ export async function applySmartV2Action(projectId: string, targets: Target[], o
     } catch {
       let failed = false;
       for (const { panel, updatedAt } of saved.reverse()) {
-        const { data, error } = await supabase.from("toon_panels").update(layoutSnapshot(panel)).eq("id", panel.id)
+        const { data, error } = await supabase.from("toon_panels").update({...layoutSnapshot(panel), image_url: panel.image_url}).eq("id", panel.id)
           .eq("project_id", projectId).eq("updated_at", updatedAt).select("id");
         if (error || data?.length !== 1) failed = true;
       }

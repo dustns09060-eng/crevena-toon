@@ -69,7 +69,7 @@ export async function saveDialogueImportAction(projectId: string, json: string, 
     try {
       for (const { panel, values } of updates) {
         // updated_at guards against changes since preview and concurrent edits.
-        const { data, error } = await supabase.from("toon_panels").update(values)
+        const { data, error } = await supabase.from("toon_panels").update({...values, image_url: null})
           .eq("id", panel.id).eq("project_id", projectId).eq("updated_at", panel.updated_at)
           .select("id, updated_at");
         if (error || data?.length !== 1) throw Error("저장 중 다른 편집이 발생했거나 일부 컷 저장에 실패했습니다.");
@@ -79,7 +79,7 @@ export async function saveDialogueImportAction(projectId: string, json: string, 
       let failedRollback = false;
       for (const { panel, updatedAt } of saved.reverse()) {
         try {
-          const { data, error } = await supabase.from("toon_panels").update(originalImportValues(panel))
+          const { data, error } = await supabase.from("toon_panels").update({...originalImportValues(panel), image_url: panel.image_url})
             .eq("id", panel.id).eq("project_id", projectId).eq("updated_at", updatedAt).select("id");
           if (error || data?.length !== 1) failedRollback = true;
         } catch { failedRollback = true; }

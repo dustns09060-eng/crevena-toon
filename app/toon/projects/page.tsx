@@ -79,6 +79,7 @@ export default async function ProjectsPage() {
                         : "스토리보드"}
                     </Link>
                   )}
+                  <Link href={`/toon/projects/new?from=${p.id}`} className="btn">설정 복사로 다음 회차</Link>
                   <details className="library-menu"><summary aria-label={`${p.title} 관리`}>관리</summary><DeleteProjectButton projectId={p.id} projectTitle={p.title} /></details>
                 </div>
               </article>

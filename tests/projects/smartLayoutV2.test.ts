@@ -76,9 +76,9 @@ describe("v2 server preview and apply", () => {
     expect(state.panel).toEqual(before);
     const result = await applySmartV2Action(projectId, [preview.entries![0].target], false);
     expect(result).toMatchObject({ ok: true, count: 1 });
-    expect(state.writes[0]).toEqual({ cover_title_bubble: expect.objectContaining({ layout_source: "SMART_V2", analysis_identity: visualImageKey(identity) }) });
+    expect(state.writes[0]).toEqual({ cover_title_bubble: expect.objectContaining({ layout_source: "SMART_V2", analysis_identity: visualImageKey(identity) }), image_url:null });
     expect([state.panel.raw_image_url, state.panel.image_url, state.panel.scene, state.panel.image_prompt]).toEqual([
-      before.raw_image_url, before.image_url, before.scene, before.image_prompt,
+      before.raw_image_url, null, before.scene, before.image_prompt,
     ]);
   });
   test("approved Gemini origin uses the same cache/layout path", async () => {

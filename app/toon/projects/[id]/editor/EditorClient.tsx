@@ -5,6 +5,8 @@ import Link from "next/link";
 import { editablePanel, changedPanels, parseDraft, restoreDraft, resizeRect, type EditorDraft } from "../../../../../lib/editor/draft";
 import type { EditorPanelData } from "../../../../../lib/projects/editor";
 import { getPanelEditorData, saveBubbleLayoutAction, saveCoverLayoutAction, saveFinalRenderAction } from "../../../../../lib/projects/editor";
+import EditorLibrary from "./EditorLibrary";
+import { applyWorkStyle } from "../../../../../lib/editor/workStyle";
 import DialogueImportPanel from "./DialogueImportPanel";
 import {
   AUTO_FIT_MAX_HEIGHT,
@@ -99,6 +101,8 @@ export default function EditorClient({
   const [batchFailed, setBatchFailed] = useState<number[]>([]);
   const [batchCompleted, setBatchCompleted] = useState<Set<string>>(() => new Set(initialPanels.filter((p) => p.hasFinalImage).map((p) => p.id)));
   const batchLock = useRef(false);
+  const [preflighting, setPreflighting] = useState(false);
+  const [preflight, setPreflight] = useState<string[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [finalPreviewUrl, setFinalPreviewUrl] = useState<string | null>(null);
   const [foregroundRect, setForegroundRect] = useState<RenderedForeground | null>(null);
@@ -651,6 +655,32 @@ export default function EditorClient({
     }
   }
 
+  async function checkBeforePublish() {
+    setPreflighting(true);setPreflight(null);
+    const issues:string[]=[];
+    try {
+      for(const target of panels){
+        const label=target.panelType==="cover"?"표지":`${target.panelNumber-1}컷`;
+        if(dirty[target.id])issues.push(`${label}: 저장하지 않은 수정 내용이 있습니다.`);
+        if(!batchCompleted.has(target.id))issues.push(`${label}: 최종 이미지를 만들어야 합니다.`);
+        if(!target.rawImageSignedUrl){issues.push(`${label}: 원본 이미지가 없습니다.`);continue;}
+        try {
+          let url=objectUrlCache.current.get(target.id);
+          if(!url){url=await fetchAsObjectUrl(target.rawImageSignedUrl);objectUrlCache.current.set(target.id,url);}
+          const result=await renderPanelToCanvas(document.createElement("canvas"),{
+            characterNames:Object.fromEntries(characters.map(c=>[c.id,c.display_name])),
+            imageObjectUrl:url,panelType:target.panelType,dialogue:target.dialogue,
+            narration:target.narration,narrationBubble:target.narrationBubble,
+            coverTitle:target.coverTitle,coverSubtitle:target.coverSubtitle,coverTitleBubble:target.coverTitleBubble,
+            width:dims.width,height:dims.height,
+          });
+          (result.warnings??[]).forEach(w=>issues.push(`${label}: ${w}`));
+        }catch{issues.push(`${label}: 이미지를 검사하지 못했습니다. 연결 상태를 확인해주세요.`);}
+      }
+      setPreflight(issues);
+    }finally{setPreflighting(false);}
+  }
+
   async function handleBatchRender() {
     if (batchLock.current) return;
     if (Object.values(dirty).some(Boolean)) {
@@ -691,8 +721,9 @@ export default function EditorClient({
 
   return (
     <div className="editor-workspace" data-history-version={historyVersion}>
-      {recovery && <section className="card" role="status"><strong>저장하지 않은 편집 내용이 이 탭에 남아 있습니다.</strong><p>서버 내용과 다를 수 있습니다. 복구 후 비교하고 저장하세요.</p><button className="btn btn-primary" onClick={()=>{checkpoint(true);applyLocalPanels(restoreDraft(panels,recovery));setRecovery(null);}}>임시 작업 복구</button><button className="btn" onClick={()=>{try{sessionStorage.removeItem(draftKey);}catch{}setRecovery(null);}}>서버 내용 유지</button></section>}
+      {recovery && <section className="card" role="status"><strong>복원할 편집 내용이 있습니다.</strong><p>서버 내용과 다를 수 있습니다. 복구 후 비교하고 저장하세요.</p><button className="btn btn-primary" onClick={()=>{checkpoint(true);applyLocalPanels(restoreDraft(panels,recovery));setRecovery(null);}}>임시 작업 복구</button><button className="btn" onClick={()=>{try{sessionStorage.removeItem(draftKey);}catch{}setRecovery(null);}}>서버 내용 유지</button></section>}
       {draftNotice && <p className="hint" role="status">{draftNotice}</p>}
+      <EditorLibrary projectId={projectId} panels={panels} current={panel} dirty={Object.values(dirty).some(Boolean)} disabled={saving||rendering||batchRendering||!!recovery||!!smartPreview||!!v2Preview} onRestore={setRecovery} onApply={(style,all)=>{checkpoint(true);applyLocalPanels(panels.map(p=>all||p.id===panel.id?applyWorkStyle(p,style):p));setSelection(null);}}/>
       <div className="form-actions">
         <button className="btn" onClick={downloadLayoutBackup}>대사·배치 백업</button>
         <input type="file" accept=".json" ref={backupInput} hidden onChange={e=>{void importLayoutBackup(e.target.files?.[0]);e.target.value="";}}/>
@@ -703,6 +734,10 @@ export default function EditorClient({
         <button className="btn" disabled={!history.current.future.length || saving || rendering || batchRendering || !!recovery} onClick={()=>travelHistory(true)}>다시 실행</button>
         <label>화면 확대 <select className="input" value={zoom} onChange={e=>setZoom(Number(e.target.value))}><option value={1}>100%</option><option value={1.5}>150%</option><option value={2}>200%</option></select></label>
       </div>
+      <section className="card" style={{marginBottom:14}}>
+        <button type="button" className="btn" disabled={preflighting||saving||rendering||batchRendering||!!recovery} onClick={()=>void checkBeforePublish()}>{preflighting?"전체 컷 점검 중…":"발행 전 전체 컷 점검"}</button>
+        {preflight && <div role="status"><p>{preflight.length?`${preflight.length}개 항목을 확인해주세요.`:"원본·저장·최종 이미지·글자 넘침 점검을 통과했습니다."}</p>{preflight.length>0 && <ul>{preflight.map((item,i)=><li key={i}>{item}</li>)}</ul>}<p className="hint">검사 시점의 결과입니다. 이후 수정했다면 다시 검사하세요. 오탈자와 얼굴 가림은 그림을 보며 최종 확인해주세요.</p></div>}
+      </section>
       <details className="editor-toolbar">
       <summary>자동 배치 도구</summary>
       <section className="card" style={{ marginBottom: 14, minWidth: 0 }}>
